@@ -92,9 +92,15 @@ export function AppHeader({
           <Badge variant="secondary" className="shrink-0">
             Draft r{ontology.draft_revision}
           </Badge>
-          <Badge variant="outline" className="hidden shrink-0 text-muted-foreground xl:inline-flex">
-            No published version
-          </Badge>
+          {ontology.latest_version ? (
+            <Badge variant="outline" className="hidden shrink-0 font-mono xl:inline-flex" data-testid="header-published-version">
+              Published v{ontology.latest_version.version}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="hidden shrink-0 text-muted-foreground xl:inline-flex">
+              No published version
+            </Badge>
+          )}
         </div>
       ) : (
         <span className="text-sm text-muted-foreground">No ontology in this project</span>

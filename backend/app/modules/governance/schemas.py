@@ -52,6 +52,7 @@ class ProposalSummary(BaseModel):
     confidence: float | None
     target_element_id: str | None
     target_label: str | None
+    new_element_id: str | None
     evidence_count: int
     edited: bool
     applied_draft_revision: int | None

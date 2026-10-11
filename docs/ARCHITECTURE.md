@@ -5,39 +5,38 @@ knowledge-graph construction**.
 
 > LLMs assist discovery. Domain experts govern meaning. Engineering systems enforce consistency.
 
-This document describes the architecture as implemented in **Phase 1** and the extension points
-reserved for Phases 2 and 3. Decisions and their rationale are recorded in
-[DECISIONS.md](./DECISIONS.md); the delivery plan is in [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
+This document describes the architecture as implemented through **Phase 2** and the extension
+points reserved for Phase 3. Decisions and their rationale are in [DECISIONS.md](./DECISIONS.md);
+the delivery plan is in [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
 
 ## 1. Principles
 
 | Principle | How it is applied |
 |---|---|
-| The approved ontology is a long-lived asset | Ontologies belong to projects and evolve through draft revisions; published versions (Phase 2) are immutable snapshots. |
-| Humans govern meaning | No AI output changes an ontology directly. AI proposals (Phase 2) enter an SME review queue. |
-| Engineering enforces consistency | Write-time invariants, optimistic concurrency, structural validation as a publication gate, audit trail. |
-| Domain independence | No business classes in application logic. Supply Chain exists only as seed *data*. |
-| Schema ≠ facts | The canonical ontology model describes schema (TBox). KG facts (ABox) have a separate model (Phase 3). |
-| Real behaviour only | Every UI action calls a real API. Not-yet-built capabilities are labelled as planned, never simulated. |
+| The approved ontology is a long-lived asset | Ontologies evolve through draft revisions; published versions are immutable snapshots with write-once artifacts. |
+| Humans govern meaning | AI output only ever becomes *pending proposals*. Nothing changes the draft until an SME approves and explicitly applies it; nothing ever changes a published version. |
+| Engineering enforces consistency | Evidence grounding, deterministic alignment, validation impact on every proposal, a validation gate on publication, optimistic concurrency and an audit trail. |
+| Do not trust the model blindly | Pydantic-validated structured output, quotes verified against the source, invented ids rejected, duplicate and conflicting suggestions re-classified. |
+| Domain independence | No business classes in application logic or prompts. Supply Chain exists only as seed and sample *data*. |
+| Real behaviour only | Every UI action calls a real API. Without a configured LLM, discovery is disabled - nothing is simulated. |
 
 ## 2. System context
 
 ```mermaid
 flowchart LR
   user([Ontology engineer / SME]) --> ui[React SPA<br/>Vite · TanStack Query · React Flow]
-  ui -- "/api (JSON)" --> api[FastAPI modular monolith]
+  ui -- "/api (JSON, multipart)" --> api[FastAPI modular monolith]
   api --> db[(SQLite now<br/>PostgreSQL-ready)]
-  api -. Phase 2 .-> llm[[LLM provider<br/>OpenAI-compatible]]
-  api -. Phase 2 .-> artifacts[(Ontology artifact store<br/>JSON · Turtle)]
+  api -- OpenAI-compatible --> llm[[LLM provider<br/>Ollama · OpenAI · Azure OpenAI · vLLM]]
+  api --> artifacts[(Write-once artifact store<br/>JSON · Turtle)]
   api -. Phase 3 .-> graph[(Graph store<br/>local → Cosmos DB Gremlin)]
-  api -. Phase 3 .-> sources[[PDF · structured records · Snowflake]]
 ```
 
 ## 3. Repository layout
 
 ```text
 .
-├── backend/                     FastAPI modular monolith (Python 3.12)
+├── backend/
 │   ├── app/
 │   │   ├── core/                settings, error envelope, id/time helpers
 │   │   ├── db/                  declarative base, UTC type, engine/session, migration runner
@@ -46,22 +45,20 @@ flowchart LR
 │   │   │   ├── ontology/        canonical schema model, authoring, drafts
 │   │   │   ├── validation/      structural rules + validation runs
 │   │   │   ├── activity/        append-only audit trail
+│   │   │   ├── llm/             LLMProvider protocol, OpenAI-compatible provider, status API
+│   │   │   ├── sources/         DocumentParser protocol, text/PDF parsing, chunking, uploads
+│   │   │   ├── discovery/       LLM contract, prompts, grounding, alignment, discovery runs
+│   │   │   ├── governance/      change proposals, evidence, decisions, impact, apply
+│   │   │   ├── registry/        snapshots, diff, RDF export, artifact repository, publishing
 │   │   │   └── seed/            Supply Chain demonstration data
 │   │   ├── main.py              app factory, router composition, lifespan
 │   │   └── cli.py               `migrate` / `seed` commands
-│   ├── migrations/              Alembic (batch mode for SQLite)
-│   └── tests/                   pytest API + unit tests
-├── frontend/                    React 19 + TypeScript + Vite
-│   ├── src/
-│   │   ├── app/                 router, route error boundary
-│   │   ├── components/          layout shell, shared states, shadcn/ui primitives
-│   │   ├── features/
-│   │   │   ├── projects/        project scope hooks, create-project dialog
-│   │   │   ├── workspace/       Project Workspace dashboard
-│   │   │   ├── ontology/        Ontology Studio (draft editor, designer, validation)
-│   │   │   └── kg/              Knowledge Graph Studio shell
-│   │   └── lib/                 typed API client, query keys, naming helpers
-│   └── e2e/                     Phase 1 user-journey check (playwright-core)
+│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers)
+│   └── tests/                   pytest unit + API tests (LLM via an explicit test double)
+├── frontend/
+│   ├── src/features/ontology/   designer · discovery · review · validation · registry · governance
+│   └── e2e/                     Phase 1 journey and Phase 2 governance journey (playwright-core)
+├── samples/                     sample source documents for discovery
 └── docs/
 ```
 
@@ -69,215 +66,199 @@ flowchart LR
 
 ### 4.1 Modules (modular monolith)
 
-| # | Module | Package | Phase 1 status |
+| # | Module | Package | Status |
 |---|---|---|---|
-| 1 | Project & data source management | `modules/projects` | Projects ✔ · data sources Phase 3 |
-| 2 | Ontology domain model & authoring | `modules/ontology` | ✔ |
-| 3 | Ontology discovery & alignment | `modules/discovery` | Phase 2 |
-| 4 | SME review & governance | `modules/governance` | Phase 2 |
-| 5 | Ontology validation | `modules/validation` | Structural rules ✔ · SHACL Phase 2/3 |
-| 6 | Registry & publishing | `modules/registry` | Phase 2 |
-| 7 | KG extraction & entity resolution | `modules/kg_extraction` | Phase 3 |
-| 8 | KG fact validation | `modules/kg_validation` | Phase 3 |
-| 9 | Graph persistence & exploration | `modules/graph` | Phase 3 |
-| 10 | Evaluation & feedback | `modules/evaluation` | Phase 3 |
-| – | Audit trail (cross-cutting) | `modules/activity` | ✔ |
+| 1 | Project & data source management | `projects`, `sources` | Projects ✔ · source documents for discovery ✔ · KG ingestion Phase 3 |
+| 2 | Ontology domain model & authoring | `ontology` | ✔ |
+| 3 | Ontology discovery & alignment | `llm`, `discovery` | ✔ Phase 2 |
+| 4 | SME review & governance | `governance` | ✔ Phase 2 |
+| 5 | Ontology validation | `validation` | Structural rules ✔ (reused for impact and publication) · SHACL Phase 3 |
+| 6 | Registry & publishing | `registry` | ✔ Phase 2 |
+| 7-10 | KG extraction, fact validation, graph, evaluation | - | Phase 3 |
+| - | Audit trail (cross-cutting) | `activity` | ✔ |
 
-Each module follows the same layering:
+Each module is layered as router (HTTP only) → service (use cases, transactions) → repository /
+pure functions → ORM models, with Pydantic contracts. Pure, framework-free functions carry the
+critical logic so it can be unit-tested: `validate_schema`, `ground_quote`, `align_findings`,
+`apply_change`, `assess_impact`, `diff_snapshots`, `snapshot_to_graph`.
 
-```text
-router.py      HTTP mapping only (FastAPI dependencies, status codes)
-service.py     use cases, business rules, transaction boundary (commit)
-repository.py  storage access (SQLAlchemy queries) and ORM ↔ domain mapping
-models.py      SQLAlchemy ORM tables
-schemas.py     Pydantic request/response contracts
-domain.py      canonical domain model (ontology module)
-```
+### 4.2 Canonical ontology model
 
-Cross-module calls go through services or repositories, never through routers. The import graph
-is acyclic: `ontology → projects.repository`, `projects.service → ontology.service`,
-`validation → ontology.service`, every module → `activity.record_activity`.
-
-### 4.2 Canonical ontology model (`modules/ontology/domain.py`)
-
-Pydantic models that are independent of SQLAlchemy, React Flow, any LLM output format and any
-graph database:
-
-| Element | Fields | OWL mapping |
-|---|---|---|
-| `ClassDefinition` | `id`, `local_name`, `label`, `description`, `aliases[]`, `parent_ids[]` | `owl:Class`, `rdfs:subClassOf`, `skos:altLabel` |
-| `ObjectPropertyDefinition` | … `domain_id`, `range_id` | `owl:ObjectProperty`, `rdfs:domain`, `rdfs:range` |
-| `DatatypePropertyDefinition` | … `domain_id`, `datatype` (XSD), `required`, `multi_valued` | `owl:DatatypeProperty`, cardinality → SHACL (Phase 2) |
-| `OntologySchema` | `namespace`, `prefix`, `classes`, `object_properties`, `datatype_properties` | `owl:Ontology` |
-
-* **`id`** is a stable element identifier (e.g. `cls-supplier`, `cls_3f9a…`). It never changes and
-  is what references use.
-* **`local_name`** forms the IRI: `namespace + local_name`. It can be corrected while drafting.
-* **`label`/`description`/`aliases`** carry business meaning for SMEs and future AI alignment.
+`modules/ontology/domain.py` defines `ClassDefinition`, `ObjectPropertyDefinition`,
+`DatatypePropertyDefinition` and `OntologySchema`. Elements have a stable `id` (used by all
+references, proposals and diffs) and an editable `local_name` that forms the IRI
+(`namespace + local_name`). The model is schema-only and independent of SQLAlchemy, React Flow,
+LLM output and graph databases.
 
 ### 4.3 Persistence model
 
 ```mermaid
 erDiagram
   projects ||--o{ ontologies : contains
-  projects ||--o{ activity_events : records
-  ontologies ||--o{ ontology_classes : "draft elements"
-  ontologies ||--o{ ontology_object_properties : "draft elements"
-  ontologies ||--o{ ontology_datatype_properties : "draft elements"
+  projects ||--o{ source_documents : "uploads"
+  source_documents ||--o{ source_chunks : "split into"
+  ontologies ||--o{ ontology_classes : "draft"
+  ontologies ||--o{ ontology_object_properties : "draft"
+  ontologies ||--o{ ontology_datatype_properties : "draft"
   ontologies ||--|| ontology_diagram_layouts : "presentation"
   ontologies ||--o{ ontology_validation_runs : "validated as"
-
-  projects { string id PK; string name UK; text description; string business_domain; timestamptz created_at; timestamptz updated_at }
-  ontologies { string id PK; string project_id FK; string name; string namespace; string prefix; text description; int draft_revision }
-  ontology_classes { string ontology_id PK; string id PK; string local_name; string label; text description; json aliases; json parent_ids; int sort_order }
-  ontology_object_properties { string ontology_id PK; string id PK; string local_name; string label; string domain_id; string range_id }
-  ontology_datatype_properties { string ontology_id PK; string id PK; string local_name; string domain_id; string datatype; bool required; bool multi_valued }
-  ontology_diagram_layouts { string ontology_id PK; json positions }
-  ontology_validation_runs { string id PK; string ontology_id FK; int draft_revision; bool is_valid; json issues }
-  activity_events { string id PK; string project_id FK; string ontology_id FK; string event_type; string summary; json details; timestamptz created_at }
+  ontologies ||--o{ discovery_runs : "analysed by"
+  discovery_runs ||--o{ change_proposals : "produces"
+  change_proposals ||--o{ proposal_evidence : "supported by"
+  change_proposals ||--o{ proposal_events : "review trail"
+  ontologies ||--o{ ontology_versions : "published as (RESTRICT)"
 ```
 
-* Element tables use the composite key `(ontology_id, id)`.
-* Cross-element references (`parent_ids`, `domain_id`, `range_id`) are element ids, **not**
-  foreign keys. A draft may therefore hold work-in-progress inconsistencies that the validator
-  reports (see §4.4). Deleting an ontology cascades to its elements.
-* `UTCDateTime` stores UTC and always returns timezone-aware values (SQLite has no tz support).
-* Constraint names follow a naming convention so Alembic batch migrations work on SQLite and
-  produce identical names on PostgreSQL.
+| Table | Purpose |
+|---|---|
+| `source_documents`, `source_chunks` | Extracted text (unique per project by SHA-256) and offset/page-tracked chunks. |
+| `discovery_runs` | Baseline (draft revision or published version), documents, model, prompt version, progress, usage, discarded findings, status. |
+| `change_proposals` | Type (ADD/REUSE/ALIAS/MODIFY/CONFLICT), status, target element, new element or field-level `{before, after}` changes, alignment notes, dependencies, the verbatim validated LLM finding, apply results. |
+| `proposal_evidence` | Verified quote, context, document name, page and offsets - stored denormalised so evidence survives document deletion. |
+| `proposal_events` | Append-only review timeline: created, commented, edited, approved, rejected, refinement requested, reopened, applied, apply failed (with actor and comment). |
+| `ontology_versions` | Immutable published snapshot, content hash, version, validation summary, change summary, artifact checksums, publisher and notes. |
 
-### 4.4 Draft lifecycle and invariants
+### 4.4 AI discovery pipeline
+
+```mermaid
+flowchart LR
+  docs[Source chunks] --> prompt[Domain-independent prompt<br/>+ ontology context]
+  prompt --> llm[LLMProvider<br/>JSON Schema output]
+  llm --> parse[Pydantic contract<br/>+ repair attempt]
+  parse --> ground[Grounding<br/>quotes located in source]
+  ground --> align[Alignment<br/>reuse · alias · conflict · dedupe]
+  align --> proposals[(Pending proposals<br/>+ verified evidence)]
+```
+
+1. **Run** (`POST /ontologies/{id}/discovery-runs`, 202): validated, queued and executed by a
+   background worker; the UI polls progress. One active run per ontology; runs interrupted by a
+   restart are marked failed at startup.
+2. **Prompting**: chunks are batched (`OLS_DISCOVERY_BATCH_CHARS`), labelled `C1..Cn`, and sent with
+   a compact rendering of the baseline ontology (ids, labels, aliases, hierarchy, signatures).
+   The prompt contains no business concepts and tells the model to treat the source as data.
+3. **Structured output**: `LLMDiscoveryResponse` (Pydantic) is sent as JSON Schema
+   (`$ref`s inlined for grammar-based engines) and every reply is validated; one repair prompt is
+   sent on failure. A malformed batch is recorded and skipped; a transport error fails the run.
+4. **Grounding**: each quote must be located in a chunk (case/whitespace/typographic-quote
+   insensitive, strict fuzzy fallback for long quotes). Verified quotes are replaced by the exact
+   source span with offsets and context. Findings without verified evidence are discarded and
+   listed on the run with a reason.
+5. **Alignment** (deterministic): labels, local names and aliases are normalised (case, camelCase,
+   plurals) and matched exactly or by similarity.
+   * ADD of an existing concept → REUSE, or ALIAS when the source term is a new synonym.
+   * ADD of a relationship whose name exists with a different domain/range → CONFLICT.
+   * Relationship with a literal range (`string`, `xsd:date`, …) → attribute of that datatype.
+   * REUSE/ALIAS of an unknown concept → ADD; MODIFY/CONFLICT of an unknown element → discarded.
+   * ALIAS colliding with another element's name → CONFLICT; no-op MODIFY → REUSE.
+   * Near matches are flagged as possible duplicates; duplicate findings are merged.
+   * Domain/range/parent references resolve to existing classes or to classes added in the same
+     run (recorded as proposal dependencies); unresolved references are flagged.
+   Every adjustment is recorded as an alignment note, and the original model action is kept.
+
+### 4.5 SME review and governance
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Draft: create ontology (r1)
-  Draft --> Draft: granular command / draft save (r+1)
-  Draft --> Validated: validation run (report bound to revision)
-  Validated --> Draft: further edits (report becomes outdated)
-  Validated --> Published: publish when valid (Phase 2, immutable)
-  Published --> Draft: evolve (new draft based on version, Phase 2)
+  [*] --> pending: discovery
+  pending --> approved: approve (impact checked)
+  pending --> needs_refinement: request refinement (comment)
+  pending --> rejected: reject (comment)
+  needs_refinement --> pending: edit
+  needs_refinement --> approved: approve
+  approved --> pending: reopen
+  approved --> rejected: reject
+  rejected --> pending: reopen
+  approved --> applied: apply to draft
 ```
 
-Two write paths share the same tables:
+* **Impact** (`assess_impact`): applies the proposal - after its unapplied dependencies - to a
+  copy of the current draft and runs `validate_schema` before and after; the delta (introduced and
+  resolved issues) is shown with every proposal. Approval is refused when the proposal is not
+  applicable or would introduce error-severity issues.
+* **Edit**: SMEs can change the type, target, new element or proposed values; `before` values are
+  rebased on the current draft. The original model output is never modified.
+* **Apply** (`POST /ontologies/{id}/proposals/apply`): approved proposals are applied in
+  dependency order with `apply_change` (references must exist, local names unique, hierarchy
+  acyclic, scalar fields checked for drift since the proposal was created, list fields merged).
+  Failures are isolated per proposal; successful changes are persisted in one transaction through
+  `OntologyService.replace_schema`, which increments the draft revision and records activity.
+  Published versions are never touched.
 
-| Path | Endpoint(s) | Guarantees |
-|---|---|---|
-| Granular commands | `POST/PATCH/DELETE …/classes`, `…/object-properties`, `…/datatype-properties` | Unique element id and local name; referenced classes must exist; no hierarchy cycles; deleting a referenced class requires `cascade=true`. |
-| Whole-draft save | `PUT /ontologies/{id}/draft` | Atomic diff-based upsert of metadata, elements and layout; **optimistic concurrency** (`base_revision` must equal `draft_revision`, else `409 DRAFT_REVISION_CONFLICT`); duplicate ids rejected; references may be inconsistent and are reported by validation. |
+### 4.6 Registry and publication
 
-Every semantic change increments `draft_revision` and writes an activity event with a change
-summary. Layout-only saves persist node positions without creating a revision.
+* **Snapshot**: canonical JSON (elements sorted by id) with a SHA-256 content hash.
+* **Publish** (`POST /ontologies/{id}/versions`): runs and persists a fresh validation and
+  refuses on errors; refuses when the draft equals the latest version; requires a semantic version
+  greater than the latest (suggested from the diff: removals and IRI/signature changes → major,
+  additions → minor, documentation → patch); optional optimistic check of the reviewed draft
+  revision; writes JSON and Turtle artifacts, then commits the version (artifacts are removed if
+  the commit fails).
+* **Immutability** in four layers: no update/delete endpoints; SQLAlchemy `before_update` /
+  `before_delete` guards; database triggers (SQLite `RAISE(ABORT)`, PostgreSQL trigger function)
+  and a `RESTRICT` foreign key from versions to ontologies; artifact files created exclusively,
+  marked read-only and verified against their checksum on every export.
+* **Compare** (`GET /ontologies/{id}/compare?base=&target=`): field-level diff between any two
+  versions or a version and the draft.
+* **RDF**: RDFLib OWL export - `owl:Ontology` with `owl:versionInfo`/`owl:versionIRI`, classes,
+  object and datatype properties, `rdfs:subClassOf`, domain/range, XSD ranges, `skos:definition`,
+  `skos:altLabel`, `dcterms:identifier` (stable element id), `owl:FunctionalProperty` for
+  single-valued attributes and `owl:minCardinality 1` restrictions for required attributes.
 
-### 4.5 Validation (`modules/validation`)
+### 4.7 API
 
-`validate_schema(OntologySchema) -> list[ValidationIssue]` is a pure function, so the same rules
-will validate imports and AI proposals in Phase 2. Runs are persisted with the draft revision
-they validated; a report is *current* only while the draft revision is unchanged.
+All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors use
+`{"error": {"code", "message", "details"}}`.
 
-| Severity | Meaning | Codes |
-|---|---|---|
-| error | structurally broken; will block publication | `NAMESPACE_INVALID`, `NAMESPACE_MISSING_SEPARATOR`, `PREFIX_INVALID`, `PREFIX_RESERVED`, `DUPLICATE_ELEMENT_ID`, `LOCAL_NAME_INVALID`, `DUPLICATE_LOCAL_NAME`, `CLASS_PARENT_UNKNOWN`, `CLASS_PARENT_SELF`, `CLASS_HIERARCHY_CYCLE`, `PROPERTY_DOMAIN_MISSING`, `PROPERTY_DOMAIN_UNKNOWN`, `PROPERTY_RANGE_MISSING`, `PROPERTY_RANGE_UNKNOWN` |
-| warning | probable modelling problem for SME review | `ONTOLOGY_EMPTY`, `LOCAL_NAME_CASE_COLLISION`, `DUPLICATE_CLASS_LABEL`, `ALIAS_CONFLICT`, `DUPLICATE_RELATIONSHIP`, `DUPLICATE_ATTRIBUTE`, `DESCRIPTION_MISSING` (classes, relationships) |
-| info | convention / completeness hint | `LOCAL_NAME_CONVENTION`, `ORPHAN_CLASS`, `INHERITED_ATTRIBUTE_REDECLARED`, `DESCRIPTION_MISSING` (attributes) |
+| Area | Endpoints |
+|---|---|
+| System | `GET /health`, `GET /llm/status?check=` |
+| Projects | `GET/POST /projects`, `GET/PATCH /projects/{id}`, `GET /projects/{id}/activity` |
+| Ontologies & draft | `GET/POST /projects/{id}/ontologies`, `GET/PATCH/DELETE /ontologies/{id}`, `GET/PUT /ontologies/{id}/draft` |
+| Elements | CRUD under `/ontologies/{id}/classes`, `/object-properties`, `/datatype-properties` |
+| Validation | `POST/GET /ontologies/{id}/validations`, `GET /ontologies/{id}/validations/latest` |
+| Sources | `GET/POST(multipart) /projects/{id}/sources`, `GET/DELETE /sources/{id}` |
+| Discovery | `POST/GET /ontologies/{id}/discovery-runs`, `GET /discovery-runs/{id}` |
+| Governance | `GET /ontologies/{id}/proposals`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
+| Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|json`, `GET /ontologies/{id}/compare` |
 
-### 4.6 API
+### 4.8 Runtime
 
-All endpoints are under `/api`; interactive documentation is at `http://127.0.0.1:8000/docs`.
-Errors use one envelope: `{"error": {"code", "message", "details"}}`.
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | API and database status |
-| GET, POST | `/projects` | List / create (optionally with an initial ontology) |
-| GET, PATCH | `/projects/{project_id}` | Read / update |
-| GET | `/projects/{project_id}/activity?limit=` | Audit trail, newest first |
-| GET, POST | `/projects/{project_id}/ontologies` | List (with element counts) / create |
-| GET, PATCH, DELETE | `/ontologies/{ontology_id}` | Ontology metadata |
-| GET, PUT | `/ontologies/{ontology_id}/draft` | Full working copy / atomic save with optimistic lock |
-| GET, POST | `/ontologies/{ontology_id}/classes` | List / create class |
-| GET, PATCH, DELETE | `/ontologies/{ontology_id}/classes/{class_id}?cascade=` | Class CRUD |
-| GET, POST | `/ontologies/{ontology_id}/object-properties` | List / create relationship |
-| GET, PATCH, DELETE | `/ontologies/{ontology_id}/object-properties/{id}` | Relationship CRUD |
-| GET, POST | `/ontologies/{ontology_id}/datatype-properties` | List / create attribute |
-| GET, PATCH, DELETE | `/ontologies/{ontology_id}/datatype-properties/{id}` | Attribute CRUD |
-| POST | `/ontologies/{ontology_id}/validations` | Validate the saved draft and persist the report |
-| GET | `/ontologies/{ontology_id}/validations?limit=` | Validation history, newest first |
-| GET | `/ontologies/{ontology_id}/validations/latest` | Latest report (404 when never validated) |
-
-### 4.7 Runtime
-
-* `create_app(settings)` builds the engine and session factory per application instance, which
-  keeps tests isolated (each test gets its own SQLite file and migrated schema).
-* On startup the lifespan applies Alembic migrations (`OLS_AUTO_MIGRATE`) and seeds the demo
-  project into an empty database (`OLS_SEED_DEMO_DATA`).
-* Configuration is environment-driven (`OLS_*`, see `.env.example`); no secrets in code.
+* `create_app(settings)` builds the engine, session factory, LLM provider (or `None`) and artifact
+  repository per instance; tests replace the provider with a scripted test double.
+* Startup applies migrations (`OLS_AUTO_MIGRATE`), fails interrupted discovery runs and seeds the
+  demo project into an empty database.
+* Configuration is environment-driven (`.env.example`); the LLM API key is a secret value that is
+  never logged or returned by the API.
 
 ## 5. Frontend
 
-### 5.1 Navigation
+Navigation keeps exactly three sections (Project Workspace, Ontology Studio, Knowledge Graph
+Studio). All Phase 2 functionality lives in **Ontology Studio** tabs:
 
-Three primary sections in a collapsible sidebar; routes are project-scoped and deep-linkable.
-
-| Route | Page |
+| Tab | Capabilities |
 |---|---|
-| `/` | Opens the last used (or first) project, or offers to create one |
-| `/projects/:projectId/workspace` | Project Workspace |
-| `/projects/:projectId/ontology?ontology=&tab=` | Ontology Studio (`designer`, `discovery`, `review`, `validation`, `registry`) |
-| `/projects/:projectId/knowledge-graph` | Knowledge Graph Studio |
+| Ontology Designer | Visual editing of the working copy (Phase 1). |
+| AI Discovery | Provider status, source upload (drag & drop), run configuration (baseline draft or published version, SME focus), live run progress, results by type, discarded findings with reasons. |
+| SME Review | Queue with status/type/run filters and search; detail with validation impact, current vs proposed values, alignment notes (including where alignment overrode the model), rationale, verified evidence highlighted in context, editing, decisions with mandatory comments for reject/refine, review timeline, comments, and "Apply approved to draft". |
+| Validation | Structural validation of the saved draft (Phase 1). |
+| Registry | Publication preview (validation gate, changes since the last version, breaking changes, suggested version), publish with release notes, version history with checksum-verified Turtle/JSON downloads, version comparison. |
 
-The header shows the project selector, current ontology and draft revision, and live API status.
+The reviewer identifies themselves once (stored locally); the name is recorded on decisions,
+comments, applications and publications. Applying and publishing are blocked while the designer
+has unsaved changes; after applying, the draft reloads into the designer. The header shows the
+latest published version, and the workspace summarises pending reviews, versions and sources with
+links into the studio.
 
-### 5.2 State management
+## 6. Extension points
 
-* **Server state**: TanStack Query with explicit query keys (`lib/query.ts`); mutations
-  invalidate dependent queries (ontology stats, activity, validation).
-* **Draft working copy**: `useDraftEditor` holds `{base, baseDoc, doc}`. Edits are pure reducer
-  actions (`draft/model.ts`) mirroring backend cascade semantics. `dirty` is a structural
-  comparison with the last saved draft. Saving sends `base_revision`; conflicts surface a
-  "reload latest" path. Server refreshes never overwrite unsaved local edits, and edits made
-  while a save is in flight are preserved.
-* **Navigation guard**: leaving the studio with unsaved changes requires confirmation
-  (`useBlocker`) and a browser `beforeunload` prompt protects refresh/close.
+| Interface | Implementations | Notes |
+|---|---|---|
+| `LLMProvider` | `OpenAICompatibleProvider` (tests: scripted double) | Structured output + repair; swap via configuration. |
+| `DocumentParser` | `PlainTextParser`, `PdfParser` | Add OCR/Office parsers without touching callers. |
+| `OntologyArtifactRepository` | `FilesystemArtifactRepository` | Blob storage (e.g. Azure Blob with immutability policies) later. |
+| `GraphStore` | Phase 3 | Local graph first, Azure Cosmos DB Gremlin adapter later. |
 
-### 5.3 Ontology designer
-
-* React Flow renders the canonical model; the domain model is not shaped around React Flow
-  (`designer/flow.ts` adapts it).
-* Class nodes list their attributes; relationships are labelled directed **floating edges**
-  with offsets for parallel edges and loops for self-relationships; `subClassOf` edges are dashed.
-* Drag from a class handle to another class to start a relationship; the dialog is prefilled.
-* New classes are placed at the nearest free spot around the viewport centre.
-* The right-side drawer inspects and edits classes (definition, aliases, parents, attributes,
-  relationships, cascade delete), relationships (domain/range), attributes and ontology metadata.
-* The outline panel searches all elements, including ones that cannot be drawn (dangling
-  references), so every validation finding can be navigated to.
-* Validation findings are shown on nodes, in the outline and in the inspector when the report
-  matches the current draft revision; "Show" on a finding opens and centres the element.
-
-## 6. Extension points (Phase 2 / 3)
-
-Interfaces will be introduced together with their first real implementation:
-
-```python
-class LLMProvider(Protocol):            # OpenAI-compatible HTTP; Ollama / hosted models via config
-    def generate_structured(self, prompt: Prompt, schema: type[T]) -> T: ...   # Pydantic-validated
-
-class DocumentParser(Protocol):         # PDF / structured records → chunks with locations
-    def parse(self, source: SourceRef) -> list[DocumentChunk]: ...
-
-class OntologyArtifactRepository(Protocol):  # immutable published artifacts (filesystem first)
-    def put(self, version: OntologyVersionRef, fmt: ArtifactFormat, content: bytes) -> ArtifactRef: ...
-    def get(self, ref: ArtifactRef) -> bytes: ...
-
-class GraphStore(Protocol):             # local graph first, Azure Cosmos DB Gremlin later
-    def upsert_facts(self, facts: Sequence[ValidatedFact]) -> None: ...
-    def neighbourhood(self, entity_id: str, depth: int) -> Subgraph: ...
-```
-
-* **Published versions** (Phase 2): `ontology_versions` table with an immutable canonical JSON
-  snapshot, content hash and artifact references; RDFLib serialises Turtle/OWL; publishing
-  requires a current, error-free validation report.
-* **Change proposals** (Phase 2): proposals reference elements by id and carry evidence,
-  rationale and reviewer decisions; applying an approved proposal uses the granular commands.
-* **KG facts** (Phase 3): a separate candidate-fact model (subject, predicate, object/literal,
-  source location, ontology version, extraction run, validation status and reasons) with
-  structural validation and evidence grounding evaluated independently.
+Phase 3 adds the KG candidate-fact model (subject, predicate, object/literal, source location,
+ontology **version**, extraction run, validation status and reasons), structural fact validation
+and evidence grounding as separate dimensions, graph persistence and exploration, and evaluation
+that generates change proposals into the existing SME review queue.

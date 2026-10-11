@@ -56,9 +56,17 @@ export function KnowledgeGraphStudioPage() {
             )}
           </li>
           <li className="flex items-center gap-2">
-            <Circle className="size-4 text-muted-foreground" />
+            {activeOntology?.latest_version ? (
+              <CheckCircle2 className="size-4 text-emerald-600" />
+            ) : (
+              <Circle className="size-4 text-muted-foreground" />
+            )}
             Published, approved ontology version
-            <span className="text-muted-foreground">(publishing arrives in Phase 2)</span>
+            <span className="text-muted-foreground">
+              {activeOntology?.latest_version
+                ? `(v${activeOntology.latest_version.version} available)`
+                : '(publish one in Ontology Studio → Registry)'}
+            </span>
           </li>
           <li className="flex items-center gap-2">
             <Circle className="size-4 text-muted-foreground" />

@@ -142,11 +142,12 @@ a prefilled relationship dialog; deletion goes through the inspector with confir
 **Consequences.** Seed data obeys the same invariants as user data and never overwrites user
 changes on restart.
 
-## ADR-014 Defer RDFLib / PySHACL / LLM dependencies to the phase that uses them
-**Status:** Accepted
+## ADR-014 Defer PySHACL and graph dependencies to the phase that uses them
+**Status:** Accepted (updated in Phase 2)
 
-**Decision.** Phase 1 installs only what it uses. RDFLib arrives with export/import (Phase 2),
-PySHACL with fact validation (Phase 3), an OpenAI-compatible HTTP client with discovery (Phase 2).
+**Decision.** Each phase installs only what it uses. Phase 2 added RDFLib (export), pypdf (PDF
+text), python-multipart (uploads) and httpx2 (LLM HTTP). PySHACL and graph clients arrive with
+Phase 3.
 
 ## ADR-015 Tooling choices
 **Status:** Accepted
@@ -165,3 +166,102 @@ PySHACL with fact validation (Phase 3), an OpenAI-compatible HTTP client with di
 **Decision.** `OLS_AUTO_MIGRATE=true` applies Alembic migrations in the FastAPI lifespan for a
 zero-step local start. Managed environments should set it to `false` and run
 `python -m app.cli migrate` as a release step.
+
+---
+
+# Phase 2 decisions
+
+## ADR-017 LLM access through a provider protocol and the OpenAI-compatible API
+**Status:** Accepted (Phase 2)
+
+**Decision.** The application depends on `LLMProvider.generate_structured(system, user, schema)`.
+The only production implementation targets the OpenAI-compatible Chat Completions API, which
+covers OpenAI, Azure OpenAI (v1), Ollama, vLLM and LM Studio. Structured output is requested with
+`response_format` (JSON Schema by default, JSON mode or prompt-only as fallbacks) and always
+re-validated with Pydantic; one repair prompt is sent on invalid output. Without
+`OLS_LLM_BASE_URL` and `OLS_LLM_MODEL` the provider is absent and discovery returns
+`503 LLM_NOT_CONFIGURED`. Automated tests inject an explicit scripted test double; the product
+never fabricates model output. The HTTP client is `httpx2` (the client Starlette recommends), so
+one HTTP library serves runtime and tests.
+
+## ADR-018 The model suggests; deterministic engineering decides what becomes a proposal
+**Status:** Accepted
+
+**Context.** Small or local models confuse element kinds, invent ids, paraphrase quotes and
+re-propose existing concepts.
+
+**Decision.** A separate LLM contract (`LLMFinding`) is mapped into proposals only after:
+evidence grounding (quotes must be located in the source; otherwise the finding is discarded),
+alignment against the baseline (duplicates → REUSE/ALIAS, signature clashes → CONFLICT, literal
+ranges → attributes, invented ids resolved by name or rejected) and merging of duplicates. Every
+adjustment is recorded as an alignment note and the verbatim validated finding is stored.
+
+**Consequences.** Recall depends on the model (larger models find more synonyms and conflicts), but
+precision, traceability and duplicate prevention do not.
+
+## ADR-019 Discovery runs as background jobs
+**Status:** Accepted
+
+**Decision.** Runs are queued (`202`) and executed by FastAPI background tasks with per-batch
+progress; no database session is held during LLM calls. One active run per ontology; runs left
+active by a restart are failed at startup. A malformed batch is skipped, a transport failure fails
+the run.
+
+**Consequences.** Works with slow local models (minutes per batch). A dedicated worker queue can
+replace background tasks without changing the API.
+
+## ADR-020 Proposals are field-level change sets with dependencies
+**Status:** Accepted
+
+**Decision.** ADD proposals carry a complete canonical element (with a pre-generated id so other
+proposals can reference it); ALIAS/MODIFY/CONFLICT carry `{field: {before, after}}`; REUSE carries
+nothing. Proposals referencing classes added in the same run record `depends_on`.
+`apply_change` is a pure function: scalar fields are checked for drift (`before` must still hold),
+list fields (aliases, parents) are merged.
+
+**Consequences.** Proposals stay valid while the draft evolves, conflicts are detected precisely,
+and the same function powers impact previews and application.
+
+## ADR-021 Approval is gated by the validation engine; application is explicit
+**Status:** Accepted
+
+**Decision.** Every proposal shows the validation delta of applying it (dependencies first) to the
+current draft. Approval is refused when the change cannot be applied or introduces error-severity
+issues; reject and request-refinement require a comment. Approved proposals reach the draft only
+through "Apply approved", which applies them in dependency order, isolates failures and increments
+the draft revision once. Apply is disabled in the UI while the designer has unsaved changes.
+
+## ADR-022 Immutable publication in four layers
+**Status:** Accepted
+
+**Decision.** (1) No mutation endpoints for versions; (2) SQLAlchemy `before_update`/`before_delete`
+guards; (3) database triggers (SQLite and PostgreSQL) plus a `RESTRICT` foreign key so neither
+direct SQL nor cascades can alter or remove versions; (4) write-once, read-only artifact files whose
+SHA-256 is verified on every export. Publication requires a fresh, error-free validation, a content
+change since the latest version and a strictly increasing semantic version.
+
+**Consequences.** An ontology with published versions cannot be deleted. Corrections are published
+as new versions.
+
+## ADR-023 Canonical snapshots and RDFLib export
+**Status:** Accepted
+
+**Decision.** Published content is a canonical JSON snapshot (elements sorted by id) hashed with
+SHA-256; Turtle is generated from it with RDFLib using OWL, RDFS, SKOS and DCTERMS, keeping stable
+element ids as `dcterms:identifier` for future round-tripping. Semantic-version bumps are suggested
+from a structural diff.
+
+## ADR-024 Reviewer identity without authentication
+**Status:** Accepted for the MVP
+
+**Decision.** With no authentication in scope, reviewers enter their name once (stored in the
+browser) and it is recorded as the actor on decisions, comments, applications and publications.
+Replace with the authenticated principal when identity is introduced.
+
+## ADR-025 Source documents are stored as extracted text
+**Status:** Accepted
+
+**Decision.** Uploads (text formats and PDF via pypdf, 10 MB limit) are parsed behind a
+`DocumentParser` protocol, de-duplicated per project by SHA-256 and stored as text plus
+offset/page-tracked chunks; the original file is not retained. Evidence stores its own quote,
+context, document name and page, so deleting a document never removes review evidence.

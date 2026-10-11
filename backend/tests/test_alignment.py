@@ -147,3 +147,17 @@ def test_relationship_with_literal_range_becomes_attribute() -> None:
     assert any("literal datatype" in note for note in proposal.alignment["notes"])
     assert proposal.title == "Add attribute 'inspection date'"
     assert proposal.llm_output["element_kind"] == "object_property", "original model output is preserved"
+
+
+def test_labels_are_normalised_to_conventions() -> None:
+    result = _align(
+        _finding(action="add", element_kind="class", label="certificate of insurance"),
+        _finding(action="add", element_kind="datatype_property", label="has expiry date", domain="Product"),
+        _finding(action="add", element_kind="class", label="SKU Batch"),
+    )
+    labels = {p.new_element["label"]: p for p in result.proposals}
+    assert set(labels) == {"Certificate of Insurance", "expiry date", "SKU Batch"}
+    assert labels["Certificate of Insurance"].new_element["local_name"] == "CertificateOfInsurance"
+    assert labels["expiry date"].new_element["local_name"] == "expiryDate"
+    assert any("normalised" in note for note in labels["expiry date"].alignment["notes"])
+    assert labels["SKU Batch"].alignment["notes"] == [], "mixed-case labels are kept as given"

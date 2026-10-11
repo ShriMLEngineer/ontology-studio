@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { Network } from 'lucide-react'
 import { useBlocker, useSearchParams } from 'react-router'
 
-import { PhaseNotice } from '@/components/common/PhaseNotice'
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/states'
 import {
   AlertDialog,
@@ -17,17 +16,22 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { validationApi } from '@/lib/api/endpoints'
+import { governanceApi, validationApi } from '@/lib/api/endpoints'
 import type { ValidationIssue } from '@/lib/api/types'
 import { queryKeys } from '@/lib/query'
 import { useProjectScope } from '@/features/projects/hooks'
 import type { ElementSelection } from './draft/model'
 import { useDraftEditor } from './draft/useDraftEditor'
 import { DesignerView, type FocusRequest } from './designer/DesignerView'
+import { DiscoveryView } from './discovery/DiscoveryView'
+import { ReviewerControl } from './governance/ReviewerControl'
+import { RegistryView } from './registry/RegistryView'
+import { ReviewView } from './review/ReviewView'
 import { ValidationView } from './validation/ValidationView'
 
 const TABS = ['designer', 'discovery', 'review', 'validation', 'registry'] as const
 type StudioTab = (typeof TABS)[number]
+type ElementKind = 'class' | 'object_property' | 'datatype_property'
 
 export function OntologyStudioPage() {
   const { projectId, ontologies, activeOntology } = useProjectScope()
@@ -38,10 +42,16 @@ export function OntologyStudioPage() {
   const editor = useDraftEditor(activeOntology?.id)
   const [selection, setSelection] = useState<ElementSelection | null>(null)
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null)
+  const [runFilter, setRunFilter] = useState<string | null>(null)
 
   const latestValidation = useQuery({
     queryKey: queryKeys.latestValidation(activeOntology?.id ?? ''),
     queryFn: () => validationApi.latest(activeOntology!.id),
+    enabled: Boolean(activeOntology),
+  })
+  const proposalStats = useQuery({
+    queryKey: queryKeys.proposalStats(activeOntology?.id ?? ''),
+    queryFn: () => governanceApi.stats(activeOntology!.id),
     enabled: Boolean(activeOntology),
   })
 
@@ -71,24 +81,26 @@ export function OntologyStudioPage() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [editor.dirty])
 
-  const showIssue = useCallback(
-    (issue: ValidationIssue) => {
+  const showElement = useCallback(
+    (kind: ElementKind | 'ontology', elementId: string | null) => {
       const doc = editor.doc
       let target: ElementSelection = { kind: 'ontology' }
       let focusId: string | null = null
-      if (issue.element_id && issue.element_kind !== 'ontology') {
-        target = { kind: issue.element_kind, id: issue.element_id }
-        if (issue.element_kind === 'class') focusId = issue.element_id
-        if (issue.element_kind === 'object_property')
-          focusId = doc?.object_properties.find((p) => p.id === issue.element_id)?.domain_id ?? null
-        if (issue.element_kind === 'datatype_property')
-          focusId = doc?.datatype_properties.find((p) => p.id === issue.element_id)?.domain_id ?? null
+      if (elementId && kind !== 'ontology') {
+        target = { kind, id: elementId }
+        if (kind === 'class') focusId = elementId
+        if (kind === 'object_property') focusId = doc?.object_properties.find((p) => p.id === elementId)?.domain_id ?? null
+        if (kind === 'datatype_property') focusId = doc?.datatype_properties.find((p) => p.id === elementId)?.domain_id ?? null
       }
       setSelection(target)
       if (focusId) setFocusRequest({ id: focusId, nonce: Date.now() })
       setTab('designer')
     },
     [editor.doc, setTab],
+  )
+  const showIssue = useCallback(
+    (issue: ValidationIssue) => showElement(issue.element_kind, issue.element_id),
+    [showElement],
   )
 
   if (ontologies.isPending) return <LoadingState label="Loading ontology…" />
@@ -123,11 +135,26 @@ export function OntologyStudioPage() {
             </Badge>
           )}
           <span className="font-mono text-xs text-muted-foreground">{editor.doc?.metadata.namespace ?? activeOntology.namespace}</span>
+          {activeOntology.latest_version && (
+            <Badge variant="outline" className="font-mono">
+              Published v{activeOntology.latest_version.version}
+            </Badge>
+          )}
+          <div className="ml-auto">
+            <ReviewerControl />
+          </div>
         </div>
         <TabsList variant="line" className="mt-3 h-10">
           <TabsTrigger value="designer">Ontology Designer</TabsTrigger>
           <TabsTrigger value="discovery">AI Discovery</TabsTrigger>
-          <TabsTrigger value="review">SME Review</TabsTrigger>
+          <TabsTrigger value="review">
+            SME Review
+            {(proposalStats.data?.awaiting_review ?? 0) > 0 && (
+              <span className="ml-1 rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary" data-testid="review-count">
+                {proposalStats.data?.awaiting_review}
+              </span>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="validation">
             Validation
             {latestValidation.data && !latestValidation.data.is_valid && (
@@ -165,44 +192,31 @@ export function OntologyStudioPage() {
           />
         )}
       </TabsContent>
-      <TabsContent value="discovery" className="min-h-0 flex-1 overflow-y-auto p-6">
-        <PhaseNotice
-          phase={2}
-          title="AI-assisted discovery"
-          description="Use an LLM to propose ontology content from source documents. Proposals are never applied automatically - they enter SME review."
-          capabilities={[
-            'Generate a seed ontology from document content',
-            'Analyse documents against the current ontology',
-            'Propose reuse, additions, modifications and aliases',
-            'Flag potential conflicts with evidence and explanations',
-          ]}
+      <TabsContent value="discovery" className="min-h-0 flex-1 overflow-y-auto">
+        <DiscoveryView
+          projectId={projectId}
+          ontologyId={activeOntology.id}
+          draftRevision={editor.base?.draft_revision ?? activeOntology.draft_revision}
+          onReviewRun={(runId) => {
+            setRunFilter(runId)
+            setTab('review')
+          }}
         />
       </TabsContent>
-      <TabsContent value="review" className="min-h-0 flex-1 overflow-y-auto p-6">
-        <PhaseNotice
-          phase={2}
-          title="SME review & governance"
-          description="Domain experts review proposed ontology changes and decide what becomes governed meaning."
-          capabilities={[
-            'Compare current and proposed definitions',
-            'Edit proposals before deciding',
-            'Approve, reject or request refinement',
-            'Record comments and an auditable decision trail',
-          ]}
-        />
+      <TabsContent value="review" className="min-h-0 flex-1">
+        {body ?? (
+          <ReviewView
+            projectId={projectId}
+            ontologyId={activeOntology.id}
+            editor={editor}
+            runFilter={runFilter}
+            onClearRunFilter={() => setRunFilter(null)}
+            onOpenInDesigner={(elementId, kind) => showElement(kind, elementId)}
+          />
+        )}
       </TabsContent>
-      <TabsContent value="registry" className="min-h-0 flex-1 overflow-y-auto p-6">
-        <PhaseNotice
-          phase={2}
-          title="Ontology registry"
-          description="Publish validated drafts as immutable versions that knowledge graph construction can depend on."
-          capabilities={[
-            'Publish immutable ontology versions',
-            'Browse version history and compare versions',
-            'Export to JSON and Turtle / OWL',
-            'Select an approved version for KG construction',
-          ]}
-        />
+      <TabsContent value="registry" className="min-h-0 flex-1 overflow-y-auto">
+        {body ?? <RegistryView projectId={projectId} ontologyId={activeOntology.id} editor={editor} />}
       </TabsContent>
 
       <AlertDialog open={blocker.state === 'blocked'}>

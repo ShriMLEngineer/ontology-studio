@@ -165,6 +165,7 @@ class GovernanceService:
             confidence=proposal.confidence,
             target_element_id=proposal.target_element_id,
             target_label=target_label,
+            new_element_id=(proposal.new_element or {}).get("id"),
             evidence_count=evidence_count,
             edited=proposal.edited,
             applied_draft_revision=proposal.applied_draft_revision,

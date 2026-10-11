@@ -27,7 +27,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Skeleton } from '@/components/ui/skeleton'
 import { CreateProjectDialog } from '@/features/projects/CreateProjectDialog'
 import { useProjectScope } from '@/features/projects/hooks'
-import { projectsApi, validationApi } from '@/lib/api/endpoints'
+import { governanceApi, projectsApi, registryApi, sourcesApi, validationApi } from '@/lib/api/endpoints'
 import type { ActivityEvent } from '@/lib/api/types'
 import { dateTime, plural, relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
@@ -85,13 +85,32 @@ export function WorkspacePage() {
     queryFn: () => validationApi.latest(activeOntology!.id),
     enabled: Boolean(activeOntology),
   })
+  const proposalStats = useQuery({
+    queryKey: queryKeys.proposalStats(activeOntology?.id ?? ''),
+    queryFn: () => governanceApi.stats(activeOntology!.id),
+    enabled: Boolean(activeOntology),
+  })
+  const versions = useQuery({
+    queryKey: queryKeys.versions(activeOntology?.id ?? ''),
+    queryFn: () => registryApi.versions(activeOntology!.id),
+    enabled: Boolean(activeOntology),
+  })
+  const sources = useQuery({
+    queryKey: queryKeys.sources(projectId),
+    queryFn: () => sourcesApi.list(projectId),
+    enabled: Boolean(projectId),
+  })
 
   if (!project) return <LoadingState />
+  const studioTab = (tab: string) =>
+    `/projects/${project.id}/ontology?${new URLSearchParams({
+      ...(activeOntology ? { ontology: activeOntology.id } : {}),
+      tab,
+    }).toString()}`
   const studioPath = `/projects/${project.id}/ontology${activeOntology ? `?ontology=${activeOntology.id}` : ''}`
-  const validationPath = `/projects/${project.id}/ontology?${new URLSearchParams({
-    ...(activeOntology ? { ontology: activeOntology.id } : {}),
-    tab: 'validation',
-  }).toString()}`
+  const validationPath = studioTab('validation')
+  const awaiting = proposalStats.data?.awaiting_review ?? 0
+  const latestVersion = versions.data?.[0]
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-6 lg:p-8">
@@ -159,7 +178,9 @@ export function WorkspacePage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="secondary">Draft r{activeOntology.draft_revision}</Badge>
-                  <Badge variant="outline">No published version</Badge>
+                  <Badge variant="outline" className="font-mono">
+                    {activeOntology.latest_version ? `Published v${activeOntology.latest_version.version}` : 'No published version'}
+                  </Badge>
                   <Badge variant="outline">Updated {relativeTime(activeOntology.updated_at)}</Badge>
                 </div>
                 <div className="rounded-lg border bg-muted/30 p-3">
@@ -268,26 +289,46 @@ export function WorkspacePage() {
         <Card>
           <CardHeader>
             <CardTitle>Governance & knowledge graph</CardTitle>
-            <CardDescription>Capabilities delivered in later milestones.</CardDescription>
+            <CardDescription>Review, publication and source status. Work happens in Ontology Studio.</CardDescription>
           </CardHeader>
           <CardContent className="divide-y">
             <StatusRow
               icon={<CheckCircle2 />}
               title="Pending reviews"
-              detail="SME review of AI proposals arrives in Phase 2."
-              badge={<Badge variant="outline">Phase 2</Badge>}
+              detail={
+                awaiting
+                  ? `${plural(awaiting, 'proposal')} awaiting SME review`
+                  : `No proposals awaiting review${proposalStats.data?.total ? ` (${proposalStats.data.total} reviewed)` : ''}`
+              }
+              badge={
+                <Button variant="outline" size="xs" asChild>
+                  <Link to={studioTab('review')}>Review</Link>
+                </Button>
+              }
             />
             <StatusRow
               icon={<GitBranch />}
               title="Published versions"
-              detail="Immutable version publishing arrives in Phase 2."
-              badge={<Badge variant="outline">Phase 2</Badge>}
+              detail={
+                latestVersion
+                  ? `Latest v${latestVersion.version} by ${latestVersion.published_by}, ${relativeTime(latestVersion.published_at)}`
+                  : 'Nothing published yet'
+              }
+              badge={
+                <Button variant="outline" size="xs" asChild>
+                  <Link to={studioTab('registry')}>{latestVersion ? `${versions.data?.length} total` : 'Publish'}</Link>
+                </Button>
+              }
             />
             <StatusRow
               icon={<Database />}
-              title="Data sources"
-              detail="PDF and structured-record ingestion arrives in Phase 3."
-              badge={<Badge variant="outline">Phase 3</Badge>}
+              title="Source documents"
+              detail={`${plural(sources.data?.length ?? 0, 'document')} for AI discovery · KG ingestion arrives in Phase 3`}
+              badge={
+                <Button variant="outline" size="xs" asChild>
+                  <Link to={studioTab('discovery')}>Discover</Link>
+                </Button>
+              }
             />
             <StatusRow
               icon={<Waypoints />}

@@ -6,7 +6,7 @@ phase ends at a verified, runnable milestone that is safe to commit.
 | Phase | Theme | Status |
 |---|---|---|
 | 1 | Application foundation & ontology designer | **Complete - verified** |
-| 2 | AI discovery & governance | Planned |
+| 2 | AI-assisted discovery & governance | **Complete - verified** |
 | 3 | Knowledge-graph construction & exploration | Planned |
 
 ---
@@ -50,35 +50,54 @@ Quality gates: `pytest` (55 tests), `npm run build` (tsc + Vite), `npm run lint`
 
 ---
 
-## Phase 2 - AI discovery & governance (Day 2)
+## Phase 2 - AI-assisted discovery & governance (Day 2)
 
 **Goal:** documents → AI proposals → SME decisions → validated, immutable published versions.
 
-1. **LLM integration** - `LLMProvider` protocol with an OpenAI-compatible implementation
-   (`OLS_LLM_BASE_URL`, `OLS_LLM_MODEL`, `OLS_LLM_API_KEY`); structured outputs validated with
-   Pydantic; retries/timeouts; prompt templates versioned in code; recorded fixtures for tests.
-2. **Source documents (minimal)** - upload/register text and PDF sources for discovery
-   (`DocumentParser` protocol; chunk ids and page locations kept as evidence references).
-3. **Discovery** - seed-ontology generation from documents; gap analysis of documents against the
-   current draft; proposals of type *add class / add property / modify / alias / reuse /
-   conflict*, each with rationale and evidence spans. Proposals are validated with
-   `validate_schema` on a simulated draft before review.
-4. **Change proposals & SME review** - `change_proposals`, `proposal_evidence`,
-   `review_decisions`, `review_comments` tables; review queue, old-vs-proposed diff, edit before
-   decision, approve / reject / request refinement; approved proposals applied through granular
-   commands with full audit trail. Nothing is auto-approved.
-5. **Registry & publishing** - `ontology_versions` (immutable canonical JSON snapshot, semantic
-   version, content hash, published_by/at, release notes); `OntologyArtifactRepository`
-   (filesystem) storing JSON and Turtle/OWL generated with RDFLib; publish only with a current
-   error-free validation report; database-level immutability tests.
-6. **Version comparison** - structural diff between two versions (added/removed/changed
-   elements and fields) in API and UI.
-7. **Import** - Turtle/OWL import via RDFLib into a draft (mapped to the canonical model).
-8. **UI** - AI Discovery, SME Review and Registry tabs; workspace "pending reviews" and
-   "published versions"; header shows the latest published version.
+### Milestones (each verified and committed)
 
-**Exit criteria:** an SME can generate proposals from a document, approve a subset, publish
-v1.0.0, export Turtle, compare v1.0.0 with the draft, and the published version cannot be edited.
+| # | Milestone | Verification |
+|---|---|---|
+| 1 | LLM provider abstraction, source documents (text/PDF), migration `0002` with immutability triggers | Provider tests against a mock transport, upload/parse/chunk tests, migration up/down and drift check, trigger checks |
+| 2 | Discovery pipeline, SME governance, registry (backend) | Unit tests for grounding, alignment, apply, diff, RDF; API tests with a scripted test double; two live runs against local Ollama |
+| 3 | Phase 2 UI inside Ontology Studio | Type check, lint, build; Phase 1 E2E regression; Phase 2 governance E2E with the real LLM |
+
+### Scope delivered
+
+| Area | Delivered |
+|---|---|
+| LLM integration | `LLMProvider` protocol; OpenAI-compatible provider (JSON Schema / JSON mode / prompt), `$ref` inlining for grammar engines, Pydantic validation with a repair attempt, typed transport/output errors, status endpoint with connectivity check; configuration only via `OLS_LLM_*` |
+| Source documents | Upload (multipart, 10 MB) of txt/md/csv/tsv/json/pdf behind a `DocumentParser` protocol; SHA-256 de-duplication; paragraph-aware chunks with offsets and pages |
+| AI discovery | Background runs against the draft or a published version with optional SME focus; batched, domain-independent prompts; progress, token usage and discarded findings recorded per run |
+| Evidence grounding | Every quote located in the source (exact or strict fuzzy); exact source spans with context and offsets stored; ungrounded findings discarded with reasons |
+| Ontology alignment | Duplicate prevention (ADD → REUSE/ALIAS), synonym capture, signature conflicts → CONFLICT, alias collisions, literal-range correction, invented-id rejection, naming-convention normalisation, merging, cross-proposal dependencies |
+| SME review | Queue with filters; evidence, current vs proposed values, alignment notes, model rationale, live validation impact; edit (including type conversion), approve / reject / request refinement / reopen with mandatory comments, comments, persistent review trail with reviewer identity |
+| Apply | Dependency-ordered, drift-checked application of approved proposals to the draft with per-proposal failure isolation; one draft revision per apply; published versions untouched |
+| Validation | Existing engine reused for proposal impact, approval gating and the publication gate |
+| Registry | Publication preview, validation-gated publish, semantic version suggestion and enforcement, canonical snapshot + hash, immutable versions (API, ORM, triggers, `RESTRICT` FK, write-once read-only artifacts with checksum verification), history, compare, Turtle/JSON export |
+| UI | AI Discovery, SME Review and Registry tabs inside Ontology Studio; reviewer identity; header and workspace summaries; KG prerequisites aware of published versions. Navigation unchanged. |
+
+### Acceptance criteria (verified)
+
+| Requirement | Verified by |
+|---|---|
+| AI Discovery produces ADD, REUSE, MODIFY, ALIAS and CONFLICT proposals with evidence | `test_discovery_run_produces_grounded_aligned_proposals` (all five types); live Ollama runs; E2E steps 3-6 |
+| Alignment minimises duplicates and identifies conflicts | `test_alignment.py` (duplicates, synonyms, signature conflicts, alias collisions, literal ranges, dependencies) |
+| SME review: evidence, edit, approve/reject/refine, comments, apply to the draft | `test_governance_api.py`; E2E steps 6-10 |
+| SME decisions and evidence persist | Review-trail assertions in API tests and E2E step 7; evidence survives document deletion (denormalised) |
+| AI proposals never update published ontologies | `test_applying_proposals_after_publication_changes_only_the_draft`; E2E step 9 |
+| Publication blocked by validation errors | `test_publish_is_blocked_by_validation_errors`; publish preview in E2E step 12 |
+| Immutable published versions, history, comparison, RDF/Turtle export | `test_registry.py` (immutability at API, ORM, SQL trigger and FK level; tamper detection; RDF round trip); E2E steps 12-15 |
+| Configurable LLM provider with Pydantic-validated structured output; no fabricated results | `test_llm_provider.py`; `503 LLM_NOT_CONFIGURED` test; live Ollama runs |
+
+Quality gates: `pytest` (127 tests), `ruff check`, `npm run build`, `npm run lint`,
+`npm run e2e:journey` (15 steps), `npm run e2e:governance` (15 steps, real LLM).
+
+### Deferred from the original Phase 2 outline
+
+* Ontology **import** (Turtle/OWL → draft) and "generate a seed ontology from documents" for an
+  empty ontology (discovery against an empty draft already proposes classes and relationships).
+* AI-assisted refinement of a single proposal from SME feedback (refinement is SME-edited today).
 
 ---
 

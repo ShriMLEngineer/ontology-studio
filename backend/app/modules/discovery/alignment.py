@@ -47,6 +47,23 @@ def literal_datatype(ref: str | None) -> str | None:
     return _LITERAL_TYPES.get(" ".join(re.findall(r"[a-z]+", ref.lower())))
 
 
+_SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with"}
+
+
+def conventional_label(kind: str, label: str) -> str:
+    """Apply the labelling conventions stated in the prompt when a model ignores them:
+    classes in Title Case (only when given entirely in lower case) and attributes as noun phrases."""
+    label = " ".join(label.split())
+    if kind == "class" and label == label.lower():
+        words = label.split(" ")
+        return " ".join(
+            w if i and w in _SMALL_WORDS else w[:1].upper() + w[1:] for i, w in enumerate(words)
+        )
+    if kind == "datatype_property" and label.lower().startswith("has ") and len(label) > 4:
+        return label[4:]
+    return label
+
+
 def _singular(word: str) -> str:
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
@@ -228,6 +245,11 @@ class _Aligner:
                 f"attribute (datatype property) of type {datatype}."
             )
             finding = finding.model_copy(update={"element_kind": "datatype_property", "datatype": datatype, "range": None})
+        if finding.action == "add":
+            label = conventional_label(finding.element_kind, finding.label)
+            if label != finding.label:
+                notes.append(f"Label normalised to the naming convention: '{finding.label}' → '{label}'.")
+                finding = finding.model_copy(update={"label": label})
         kind = finding.element_kind
         matches = self.index.match([finding.label, finding.term], kind)
         exact = next((m for m in matches if m.match_type in {"exact", "alias"}), None)
