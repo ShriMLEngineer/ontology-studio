@@ -157,6 +157,11 @@ export function ProposalDetailPanel({
           <Badge variant="outline">{KIND_LABEL[proposal.element_kind]}</Badge>
           <ProposalStatusBadge status={status} />
           {proposal.edited && <Badge variant="secondary">Edited by SME</Badge>}
+          {proposal.origin === 'kg_build' && (
+            <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-800">
+              From knowledge graph build feedback
+            </Badge>
+          )}
         </div>
         <h2 className="text-xl font-semibold" data-testid="proposal-title">
           {proposal.title}
@@ -238,7 +243,7 @@ export function ProposalDetailPanel({
       )}
 
       {proposal.rationale && (
-        <Section title="Model rationale">
+        <Section title={proposal.origin === 'kg_build' ? 'Rationale' : 'Model rationale'}>
           <p className="text-sm">{proposal.rationale}</p>
         </Section>
       )}

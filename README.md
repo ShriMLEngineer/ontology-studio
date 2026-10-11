@@ -14,19 +14,22 @@ in the application logic is specific to it.
 | Ontology governance | Create / import → AI-assisted discovery → SME review → validate → approve → publish → reuse & evolve |
 | KG construction | Ingest → select approved ontology → extract → validate facts → build / refresh → evaluate → propose ontology improvements |
 
-## Status - Phase 2 milestone (verified)
+## Status - Phase 3 milestone (verified)
 
 | Capability | State |
 |---|---|
-| Project Workspace: create/select projects, ontology summary, validation status, pending reviews, published versions, activity | ✅ working |
+| Project Workspace: create/select projects, ontology summary, validation status, pending reviews, published versions, data sources with preview, latest KG build, activity | ✅ working |
 | Ontology Studio designer: visual graph, add/edit/delete classes, relationships, attributes, hierarchy, aliases, ontology settings | ✅ working |
 | Draft persistence: atomic save, optimistic locking, revisions, layout, unsaved-changes guard | ✅ working |
 | Structural validation: 24 issue codes, persisted reports, navigate from finding to element | ✅ working |
 | **AI Discovery**: upload PDF/text sources, LLM analysis against the draft or a published version, evidence-grounded ADD / REUSE / ALIAS / MODIFY / CONFLICT proposals | ✅ working (any OpenAI-compatible LLM; verified with local Ollama `qwen2.5:7b`) |
 | **Ontology alignment**: duplicate prevention, synonym and conflict detection, unknown-id rejection, dependency tracking | ✅ working (deterministic) |
-| **SME Review**: evidence, current vs proposed, validation impact, edit, approve / reject / request refinement / reopen, comments, persistent review trail, apply approved changes to the draft | ✅ working |
+| **SME Review**: evidence, current vs proposed, validation impact, edit, approve / reject / request refinement / reopen, comments, persistent review trail, apply approved changes to the draft | ✅ working (proposals from AI discovery and from KG feedback) |
 | **Registry**: validation-gated publication of immutable versions, semantic versioning, history, comparison, Turtle / JSON export with checksums | ✅ working |
-| Data sources for KG, KG pipeline, fact validation, graph explorer, evaluation | ⏳ Phase 3 (page shows lifecycle and prerequisites) |
+| **KG pipeline**: CSV + PDF sources, saved source-to-ontology mappings, published-version builds with nine persisted stages and logs, history, rebuild | ✅ working |
+| **KG extraction & validation**: deterministic record mapping, ontology-guided LLM extraction, entity resolution, independent structural and evidence validation → accepted / rejected / quarantined with reasons | ✅ working (verified with `qwen2.5:7b`) |
+| **Graph**: provider-independent `GraphStore`, durable SQL adapter (Gremlin-shaped, build-scoped, idempotent), Cytoscape.js explorer with search, filters and source provenance | ✅ working (Cosmos DB Gremlin adapter **not** implemented - interface only) |
+| **Evaluation & feedback**: metrics with explicit denominators, ontology gaps → SME proposals → new version → rebuild | ✅ working |
 
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the full plan and acceptance
 criteria, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
@@ -35,8 +38,9 @@ criteria, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 ## Technology
 
 * **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, SQLite (PostgreSQL-compatible), RDFLib, pypdf, httpx2, pytest
-* **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui (Radix), React Flow, TanStack Query, React Router
+* **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui (Radix), React Flow, Cytoscape.js, TanStack Query, React Router
 * **AI:** any OpenAI-compatible Chat Completions endpoint (Ollama, OpenAI, Azure OpenAI, vLLM, LM Studio)
+* **Graph:** `GraphStore` protocol with a durable SQL adapter (Gremlin-shaped; Azure Cosmos DB Gremlin is the target, not yet connected)
 
 ## Prerequisites
 
@@ -81,10 +85,11 @@ All configuration comes from environment variables (prefix `OLS_` for the backen
 [.env.example](.env.example) to `.env` in the repository root and adjust as needed; every value
 has a working default. No secrets are stored in the code.
 
-### Enable AI discovery (optional)
+### Enable AI discovery and document extraction (optional)
 
-AI discovery needs an OpenAI-compatible LLM endpoint. Without one, the AI Discovery tab explains
-how to enable it and nothing is simulated. For a fully local setup with [Ollama](https://ollama.com):
+AI discovery and LLM extraction from documents need an OpenAI-compatible LLM endpoint. Without
+one, the studio explains how to enable it and nothing is simulated (knowledge graphs can still be
+built from structured CSV sources). For a fully local setup with [Ollama](https://ollama.com):
 
 ```powershell
 ollama pull qwen2.5:7b
@@ -102,8 +107,9 @@ and conflicts. A sample source document is provided in [samples/](samples/).
 
 ```powershell
 cd backend
-python -m app.cli migrate     # apply Alembic migrations
-python -m app.cli seed        # load the demo project into an empty database
+python -m app.cli migrate        # apply Alembic migrations
+python -m app.cli seed           # load the demo project into an empty database
+python -m app.cli seed-samples   # upload samples/supply-chain/*.csv|pdf into the demo project
 ```
 
 Reset the demo data: stop the backend, delete `backend\data\ontology_studio.db*` and
@@ -112,7 +118,7 @@ Reset the demo data: stop the backend, delete `backend\data\ontology_studio.db*`
 ## Tests and checks
 
 ```powershell
-# Backend: API, persistence, validation, discovery, alignment, governance, registry, migrations
+# Backend: API, persistence, validation, discovery, alignment, governance, registry, KG pipeline, graph store, migrations
 cd backend
 python -m pytest
 python -m ruff check app tests
@@ -125,11 +131,12 @@ npm run lint
 # End-to-end checks (backend and frontend running; they change data - use a disposable database)
 npm run e2e:journey           # Phase 1 designer journey
 npm run e2e:governance        # Phase 2 journey with the configured REAL LLM (takes minutes on CPU)
+npm run e2e:kg                # Phase 3 KG journey; the PDF uses the REAL LLM (E2E_KG_SKIP_PDF=1 for CSV only)
 # E2E_BROWSER_CHANNEL=chrome to use Chrome, E2E_HEADED=1 to watch
 ```
 
 Automated backend tests replace the LLM with an explicit scripted test double; the governance
-E2E uses the configured model. Screenshots are written to `frontend/e2e/artifacts/`.
+and KG E2E journeys use the configured model. Screenshots are written to `frontend/e2e/artifacts/`.
 
 ## Using the studio
 
@@ -145,28 +152,73 @@ E2E uses the configured model. Screenshots are written to `frontend/e2e/artifact
 5. **Ontology Studio → Validation** - validate the saved draft; `Show` opens the affected element.
 6. **Ontology Studio → Registry** - review the publication preview, publish an immutable version,
    compare versions and download Turtle or JSON.
-7. **Knowledge Graph Studio** - lifecycle overview and prerequisites (construction arrives in Phase 3).
+7. **Knowledge Graph Studio → Pipeline** - pick a *published* ontology version (its classes and
+   relationships are listed), select or upload sources (CSV and PDF), configure a mapping for each
+   CSV (preview, suggestion from column names, live validation), set extraction options, then
+   **Start build** and follow the nine stages and the log. Use **Rebuild with** to build again with
+   another published version; earlier builds stay unchanged and can be compared.
+8. **Knowledge Graph Studio → Graph Explorer** - explore the persisted graph (search, class /
+   relationship / source filters, table view); click a node or relationship to see its build,
+   ontology version, validation checks and the source record or page text behind it.
+9. **Knowledge Graph Studio → Fact Validation** - every candidate fact with its status, evidence
+   and reasons (e.g. "Direction reversed …", "not established by any source record").
+10. **Knowledge Graph Studio → Evaluation & Feedback** - quality indicators with their definitions,
+    and ontology gaps; select gaps and **Create change proposals** to send them to SME Review.
+
+### Demonstration (Supply Chain)
+
+With an empty database (see *Database operations*) and Ollama configured:
+
+1. Ontology Studio → Registry → publish **v1.0.0**.
+2. Knowledge Graph Studio → upload `samples/supply-chain/suppliers.csv`, `products.csv`,
+   `purchase_orders.csv`, `supply_relationships.csv` and `supplier-performance-review.pdf`
+   (or run `python -m app.cli seed-samples`), configure each CSV mapping (accept the suggestion and
+   save) and start the build (the PDF takes a few minutes on a CPU-only model).
+3. Fact Validation: *Steel Bracket SB-200 → supplies → Contoso Metals GmbH* is **rejected**
+   (reversed direction); *Fabrikam Plastics Inc → supplies → P-999* is **quarantined** (P-999 is not
+   established by any record); LLM facts whose quotes cannot be found are quarantined.
+4. Graph Explorer: click *Northwind Components Ltd → supplies → Hydraulic Pump HP-100* to see the
+   two CSV rows (and usually the PDF passage) supporting it.
+5. Evaluation & Feedback: select the gap **certified by** (Supplier → Auditor) → Create change
+   proposals → SME Review shows *Add class 'Auditor'* and *Add relationship 'certified by'* →
+   approve both → Apply → Registry → publish **v1.1.0**.
+6. Knowledge Graph Studio → select build #1 → **Rebuild with v1.1.0** → add `auditors.csv` with
+   its mapping → Start. The certification is now accepted; build #1 is unchanged; compare the builds
+   in Build history.
+
+The automated version of this scenario is `npm run e2e:kg`.
 
 ## Repository layout
 
 ```text
 backend/    FastAPI modular monolith (app/modules/*), Alembic migrations, pytest suite
 frontend/   React + Vite SPA (src/features/*), shadcn/ui components, E2E journey scripts
-samples/    Sample source documents for AI discovery
+samples/    Discovery handbook; supply-chain/ CSV datasets and PDF for knowledge graph builds
 docs/       ARCHITECTURE.md, IMPLEMENTATION_PLAN.md, DECISIONS.md
 ```
 
-## Known limitations (through Phase 2)
+## Known limitations (through Phase 3)
 
 * No authentication, authorisation or multi-tenancy; reviewers identify themselves by name.
-* Discovery quality depends on the model: small local models rarely report synonyms or conflicts
-  on their own (the deterministic alignment still prevents duplicates when they re-propose
-  existing concepts). Runs execute as in-process background tasks, one per ontology at a time.
+* Discovery and extraction quality depend on the model: a 7B local model paraphrases quotes and
+  sometimes reverses relationships - such facts are quarantined or rejected (never repaired), so
+  recall from documents is modest. Runs and builds execute as in-process background tasks (one
+  discovery run per ontology and one KG build per project at a time); a restart fails running jobs.
+* Graph storage uses the local SQL adapter; the Azure Cosmos DB Gremlin adapter is designed
+  (same `GraphStore` protocol) but not implemented or verified. The explorer is sized for MVP
+  graphs (up to a few thousand elements; larger graphs are truncated with filters).
+* Structured sources are CSV/TSV uploads (up to 10,000 records per source); the Snowflake connector
+  is an interface only. Mappings cover one entity per mapping row, single-column identifiers and
+  relationships within a record (no joins across files other than by shared business keys).
+* Evidence validation is lexical (quotes must be located verbatim and mention the entities);
+  coreference and paraphrase are quarantined. Metrics are pipeline/structural indicators, not
+  precision or recall.
 * Source documents: text formats and text-based PDFs only (no OCR, no Office formats); originals
   are not retained - only extracted text and chunks.
 * Proposals that reference classes added by other proposals must be applied together with or after
   them; editing a proposal does not re-compute its dependencies.
-* No ontology import yet; exports are Turtle and JSON (no RDF/XML or SHACL shapes).
+* No ontology import yet; exports are Turtle and JSON (no RDF/XML or SHACL shapes; no RDF export of
+  the knowledge graph).
 * Object properties support one domain and one range class; no inverse/transitive
   characteristics or qualified cardinalities.
 * Concurrent editing uses optimistic locking (reload on conflict), not real-time collaboration.

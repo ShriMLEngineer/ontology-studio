@@ -169,7 +169,7 @@ export function ReviewView({
           className="m-6"
           icon={<Inbox />}
           title="No proposals yet"
-          description="Run AI discovery on source documents to generate ontology change proposals for review."
+          description="Run AI discovery on source documents, or send ontology gaps from a knowledge graph build, to create change proposals for review."
         />
       ) : (
         <div className="flex min-h-0 flex-1">
@@ -201,6 +201,11 @@ export function ReviewView({
                     <span className="flex items-center gap-1.5">
                       <ProposalTypeBadge type={p.proposal_type} />
                       <span className="text-xs text-muted-foreground">{KIND_LABEL[p.element_kind]}</span>
+                      {p.origin === 'kg_build' && (
+                        <span className="rounded bg-violet-100 px-1.5 text-[10px] font-medium text-violet-800" data-testid="origin-kg">
+                          KG feedback
+                        </span>
+                      )}
                       <span className="ml-auto">
                         <ProposalStatusBadge status={p.status} />
                       </span>

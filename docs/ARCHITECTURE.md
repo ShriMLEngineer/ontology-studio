@@ -5,9 +5,9 @@ knowledge-graph construction**.
 
 > LLMs assist discovery. Domain experts govern meaning. Engineering systems enforce consistency.
 
-This document describes the architecture as implemented through **Phase 2** and the extension
-points reserved for Phase 3. Decisions and their rationale are in [DECISIONS.md](./DECISIONS.md);
-the delivery plan is in [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
+This document describes the architecture as implemented through **Phase 3** (knowledge-graph
+engineering, visualisation, evaluation and ontology feedback). Decisions and their rationale are in
+[DECISIONS.md](./DECISIONS.md); the delivery plan is in [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
 
 ## 1. Principles
 
@@ -18,7 +18,9 @@ the delivery plan is in [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md).
 | Engineering enforces consistency | Evidence grounding, deterministic alignment, validation impact on every proposal, a validation gate on publication, optimistic concurrency and an audit trail. |
 | Do not trust the model blindly | Pydantic-validated structured output, quotes verified against the source, invented ids rejected, duplicate and conflicting suggestions re-classified. |
 | Domain independence | No business classes in application logic or prompts. Supply Chain exists only as seed and sample *data*. |
-| Real behaviour only | Every UI action calls a real API. Without a configured LLM, discovery is disabled - nothing is simulated. |
+| Real behaviour only | Every UI action calls a real API. Without a configured LLM, discovery and document extraction are disabled - nothing is simulated. |
+| The published version is the schema authority | Knowledge-graph builds bind to one immutable published version; facts that do not fit it are rejected or become ontology gaps, never silently repaired. |
+| Traceability | Every graph node and edge links to accepted facts, and every fact to its source record or located quote, ontology version and build. |
 
 ## 2. System context
 
@@ -29,7 +31,7 @@ flowchart LR
   api --> db[(SQLite now<br/>PostgreSQL-ready)]
   api -- OpenAI-compatible --> llm[[LLM provider<br/>Ollama · OpenAI · Azure OpenAI · vLLM]]
   api --> artifacts[(Write-once artifact store<br/>JSON · Turtle)]
-  api -. Phase 3 .-> graph[(Graph store<br/>local → Cosmos DB Gremlin)]
+  api --> graph[(GraphStore<br/>SqlGraphStore now · Cosmos DB Gremlin later)]
 ```
 
 ## 3. Repository layout
@@ -50,15 +52,19 @@ flowchart LR
 │   │   │   ├── discovery/       LLM contract, prompts, grounding, alignment, discovery runs
 │   │   │   ├── governance/      change proposals, evidence, decisions, impact, apply
 │   │   │   ├── registry/        snapshots, diff, RDF export, artifact repository, publishing
-│   │   │   └── seed/            Supply Chain demonstration data
+│   │   │   ├── kg/              connectors, mappings, LLM extraction, resolution, fact validation,
+│   │   │   │                    orchestrator, evaluation, feedback, queries, API
+│   │   │   ├── graph/           GraphStore protocol + SqlGraphStore adapter
+│   │   │   └── seed/            Supply Chain demonstration data (+ sample source loader)
 │   │   ├── main.py              app factory, router composition, lifespan
-│   │   └── cli.py               `migrate` / `seed` commands
-│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers)
+│   │   └── cli.py               `migrate` / `seed` / `seed-samples` commands
+│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers), 0003 (Phase 3)
 │   └── tests/                   pytest unit + API tests (LLM via an explicit test double)
 ├── frontend/
 │   ├── src/features/ontology/   designer · discovery · review · validation · registry · governance
-│   └── e2e/                     Phase 1 journey and Phase 2 governance journey (playwright-core)
-├── samples/                     sample source documents for discovery
+│   ├── src/features/kg/         pipeline · explorer (Cytoscape) · facts · evaluation
+│   └── e2e/                     Phase 1 journey, Phase 2 governance and Phase 3 KG journeys (playwright-core)
+├── samples/                     discovery handbook; supply-chain/ CSVs + PDF for KG builds
 └── docs/
 ```
 
@@ -68,19 +74,23 @@ flowchart LR
 
 | # | Module | Package | Status |
 |---|---|---|---|
-| 1 | Project & data source management | `projects`, `sources` | Projects ✔ · source documents for discovery ✔ · KG ingestion Phase 3 |
+| 1 | Project & data source management | `projects`, `sources`, `kg.connectors` | ✔ (documents and structured CSV sources, preview) |
 | 2 | Ontology domain model & authoring | `ontology` | ✔ |
 | 3 | Ontology discovery & alignment | `llm`, `discovery` | ✔ Phase 2 |
-| 4 | SME review & governance | `governance` | ✔ Phase 2 |
-| 5 | Ontology validation | `validation` | Structural rules ✔ (reused for impact and publication) · SHACL Phase 3 |
-| 6 | Registry & publishing | `registry` | ✔ Phase 2 |
-| 7-10 | KG extraction, fact validation, graph, evaluation | - | Phase 3 |
+| 4 | SME review & governance | `governance` | ✔ Phase 2 (+ KG-origin proposals) |
+| 5 | Ontology validation | `validation` | Structural rules ✔ (reused for impact and publication) |
+| 6 | Registry & publishing | `registry` | ✔ Phase 2 (snapshots are the KG schema authority) |
+| 7 | KG extraction | `kg.mapping`, `kg.extraction`, `kg.resolution` | ✔ Phase 3 |
+| 8 | Fact validation | `kg.validation` | ✔ Phase 3 (structural + evidence) |
+| 9 | Graph persistence & query | `graph`, `kg.queries` | ✔ Phase 3 (`SqlGraphStore`) |
+| 10 | KG evaluation & ontology feedback | `kg.evaluation`, `kg.feedback` | ✔ Phase 3 |
 | - | Audit trail (cross-cutting) | `activity` | ✔ |
 
 Each module is layered as router (HTTP only) → service (use cases, transactions) → repository /
 pure functions → ORM models, with Pydantic contracts. Pure, framework-free functions carry the
 critical logic so it can be unit-tested: `validate_schema`, `ground_quote`, `align_findings`,
-`apply_change`, `assess_impact`, `diff_snapshots`, `snapshot_to_graph`.
+`apply_change`, `assess_impact`, `diff_snapshots`, `snapshot_to_graph`, `transform_records`,
+`resolve_entities`, `assess_*_structure`, `assess_*_evidence`, `compute_evaluation`.
 
 ### 4.2 Canonical ontology model
 
@@ -107,6 +117,16 @@ erDiagram
   change_proposals ||--o{ proposal_evidence : "supported by"
   change_proposals ||--o{ proposal_events : "review trail"
   ontologies ||--o{ ontology_versions : "published as (RESTRICT)"
+  ontology_versions ||--o{ kg_builds : "schema authority (RESTRICT)"
+  source_documents ||--o{ kg_source_mappings : "mapped by"
+  kg_builds ||--o{ kg_build_logs : "logs"
+  kg_builds ||--o{ kg_entities : "resolves"
+  kg_entities ||--o{ kg_entity_mentions : "from mentions"
+  kg_builds ||--o{ kg_candidate_facts : "validates"
+  kg_builds ||--o{ kg_ontology_gaps : "finds"
+  kg_builds ||--o{ change_proposals : "feeds back (origin kg_build)"
+  kg_builds ||--o{ graph_vertices : "graph_id scope"
+  kg_builds ||--o{ graph_edges : "graph_id scope"
 ```
 
 | Table | Purpose |
@@ -117,6 +137,13 @@ erDiagram
 | `proposal_evidence` | Verified quote, context, document name, page and offsets - stored denormalised so evidence survives document deletion. |
 | `proposal_events` | Append-only review timeline: created, commented, edited, approved, rejected, refinement requested, reopened, applied, apply failed (with actor and comment). |
 | `ontology_versions` | Immutable published snapshot, content hash, version, validation summary, change summary, artifact checksums, publisher and notes. |
+| `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
+| `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
+| `kg_build_logs` | Append-only execution log per build and stage. |
+| `kg_entities`, `kg_entity_mentions` | Resolved entities with the resolution decision (method, ambiguity candidates, notes) and every source mention (denormalised provenance). |
+| `kg_candidate_facts` | Type, relationship and attribute facts with independent structural, evidence and resolution check results, status, reasons, sources and the graph element they produced. |
+| `kg_ontology_gaps` | Unknown classes, relationships, attributes and unmapped fields with suggestion, evidence, occurrences and linked proposals. |
+| `graph_vertices`, `graph_edges` | `SqlGraphStore` data keyed by `(graph_id, id)`: Gremlin-shaped labels, properties, fact ids and source ids. |
 
 ### 4.4 AI discovery pipeline
 
@@ -204,7 +231,117 @@ stateDiagram-v2
   `skos:altLabel`, `dcterms:identifier` (stable element id), `owl:FunctionalProperty` for
   single-valued attributes and `owl:minCardinality 1` restrictions for required attributes.
 
-### 4.7 API
+### 4.7 Knowledge-graph engineering (Phase 3)
+
+```mermaid
+flowchart LR
+  subgraph sources [Source connectors]
+    csv[StructuredSource<br/>CSV records] --- doc[TextSource<br/>PDF/text chunks]
+  end
+  ver[(Published version<br/>snapshot)] --> map
+  ver --> llm
+  csv --> map[Deterministic mapping<br/>no LLM per row]
+  doc --> llm[Ontology-guided LLM<br/>Pydantic contract]
+  map --> canon[Canonical mentions,<br/>fact candidates, gap candidates]
+  llm --> norm[Normalise: resolve ids,<br/>locate quotes] --> canon
+  canon --> res[Entity resolution<br/>key → alias, ambiguity flagged]
+  res --> sv[Structural validation]
+  sv --> ev[Evidence validation]
+  ev --> st{status}
+  st -- accepted --> gs[(GraphStore<br/>graph_id = build)]
+  st -- rejected / quarantined --> facts[(Candidate facts<br/>with reasons)]
+  canon --> gaps[(Ontology gaps)] --> fb[Gap → proposal] --> review[[SME Review]]
+```
+
+**Build lifecycle.** A build is configured (published version, sources, one saved mapping per
+structured source, extraction settings), then started. Starting validates readiness (sources
+exist, mappings are compatible with the selected version, LLM configured when documents are
+included, one active build per project) and freezes a configuration snapshot: source hashes,
+mapping specs, ontology version and content hash, LLM provider/model/prompt version. The
+orchestrator (`kg/orchestrator.py`) runs as a FastAPI background task - a deterministic Python
+workflow, no queue or agent framework - and persists each of the nine stages (status, timing,
+counts, summary) and every log line. Interrupted builds are failed at startup. Configuration is
+editable only before start; executed builds are kept (not deletable) and rebuilding creates a new
+build linked to its parent.
+
+| Stage | Work |
+|---|---|
+| 1 Source loading | Load the version snapshot (`OntologyView`) and open connectors; verify source hashes. |
+| 2 Content parsing | Count records, re-check mappings against the columns and version, prepare chunk batches. |
+| 3 Entity extraction | Deterministic `transform_records` for structured sources; one LLM request per batch for documents (entities normalised now). |
+| 4 Relationship extraction | Normalise LLM relationships, attributes and unknown concepts; predicates resolved against the version. |
+| 5 Entity resolution | `resolve_entities`; resolved entities and mentions persisted. |
+| 6 Structural validation | `assess_*_structure` for every entity type fact, relationship and attribute. |
+| 7 Evidence validation | `assess_*_evidence`; status derived; single-value conflicts quarantined; facts persisted. |
+| 8 Graph persistence | Accepted facts → `GraphVertex`/`GraphEdge` upserts under the build's graph scope. |
+| 9 Evaluation | Gaps persisted; metrics computed and stored on the build. |
+
+**Source connectors** (`kg/connectors.py`). The pipeline depends on two protocols:
+`StructuredSource` (columns + records) and `TextSource` (page-aware chunks). Today both are backed
+by Phase 2 source documents (CSV text parsed with the `csv` module; PDF chunks never span pages).
+A Snowflake table/query connector implements `StructuredSource` without changing mappings or the
+pipeline.
+
+**Mappings** (`kg/mapping.py`). A generic spec of entity mappings (fixed class or class named in
+a column, identifier/label/alias columns, key namespace, reference-only flag, attribute → datatype
+property) and relationship mappings (fixed predicate or predicate named in a column, between two
+entity mappings of the same record). Validation against a version reports errors (unknown
+columns/elements) and warnings (domain mismatch, reversed direction - such facts will be rejected).
+A deterministic, column-name based suggestion pre-fills new mappings for SME review.
+
+**LLM extraction** (`kg/extraction.py`, prompt `kg-extraction/2026-10-1`). The prompt renders
+the published snapshot (class ids, relationship ids with domain → range, attribute ids) and the
+chunk batch; the model returns `LLMExtractionResponse` (entities, relationships, attributes,
+unknown concepts, each with chunk id and verbatim quote). Normalisation resolves references only
+against the snapshot (unknown ones become gap candidates and invalid facts), locates every quote in
+the real text (`ground_quote`) and keeps the validated output on the build for audit. Raw model
+output is never written to the graph.
+
+**Entity resolution** (`kg/resolution.py`). (1) Business key: same class, key namespace and
+normalised identifier - text mentions may also match one identified entity of a compatible sub- or
+superclass. (2) Mentions without an identifier merge only with exactly one identified entity of a
+compatible class whose label or configured alias matches. (3) Several candidates → a separate,
+*ambiguous* entity whose facts are quarantined. Similarity never merges. Vertex ids are stable
+hashes of class + key, so the same entity has the same id in every build.
+
+**Fact validation** (`kg/validation.py`) - two independent categories plus resolution:
+
+| Category | Checks |
+|---|---|
+| Structural | Class / predicate / attribute defined in the version; right property kind; subject/object refer to extracted, identified entities of defined classes; domain and range with subclass inheritance (a reversed relationship is reported as such and never repaired); literal parses as the declared XSD datatype. |
+| Evidence | Traceable source and location; structured facts are stated by their record; text facts need a quote located in the source that mentions both entities (or contains the value); both endpoints must be established by a source record or located text. |
+| Resolution | Ambiguous entity; conflicting value of a single-valued attribute. |
+
+Status: structural failure → **REJECTED**; resolution failure or weak / unlocated evidence →
+**QUARANTINED**; no evidence → **REJECTED**; otherwise **ACCEPTED**. Every check result and reason
+is persisted. Entity type facts ("X is a Supplier") are validated too; only accepted entities become
+nodes.
+
+**Graph storage** (`graph/`). `GraphStore` protocol: idempotent `upsert_vertices` /
+`upsert_edges`, `get_vertex` / `get_edge`, `fetch_graph`, `search_vertices`, `edges_of`,
+`neighborhood`, `provenance`, `counts`. `SqlGraphStore` is the durable local adapter (no Neo4j or
+Cosmos connection is configured). The data model is Gremlin-shaped: vertex label = class local
+name, edge label = property local name, properties, and a `graph_id` scope that maps to a Cosmos
+partition key. Edge ids hash (subject, predicate, object), so duplicate facts from several sources
+merge into one edge whose provenance lists all of them. Each build writes only its own scope; a
+rebuild never touches an earlier graph.
+
+**Evaluation** (`kg/evaluation.py`). Indicators with explicit numerator, denominator and
+definition: sources/records/chunks processed, LLM batches, mentions, entities, relationship and
+attribute candidates, accepted/rejected/quarantined, acceptance rates, class/relationship/attribute
+coverage of the version, missing class/relationship/attribute mappings and unmapped fields, facts
+lacking adequate provenance, graph elements without provenance, entities missing required
+attributes, and resolution outcomes. The evaluation states that it does not measure precision or
+recall.
+
+**Ontology feedback** (`kg/feedback.py`). Selected gaps (plus the unknown classes that selected
+relationship/attribute gaps depend on) become `LLMFinding`-shaped ADD findings with the source
+records/quotes as evidence, are aligned against the ontology's *current draft* with the Phase 2
+`align_findings` (duplicates become REUSE/ALIAS) and stored with `persist_drafts` as pending
+proposals (`origin = kg_build`, `kg_build_id`). They enter the unchanged SME review → apply →
+publish flow; once a new version is published it is selectable for the next build.
+
+### 4.8 API
 
 All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors use
 `{"error": {"code", "message", "details"}}`.
@@ -216,24 +353,30 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | Ontologies & draft | `GET/POST /projects/{id}/ontologies`, `GET/PATCH/DELETE /ontologies/{id}`, `GET/PUT /ontologies/{id}/draft` |
 | Elements | CRUD under `/ontologies/{id}/classes`, `/object-properties`, `/datatype-properties` |
 | Validation | `POST/GET /ontologies/{id}/validations`, `GET /ontologies/{id}/validations/latest` |
-| Sources | `GET/POST(multipart) /projects/{id}/sources`, `GET/DELETE /sources/{id}` |
+| Sources | `GET/POST(multipart) /projects/{id}/sources`, `GET/DELETE /sources/{id}`, `GET /sources/{id}/preview` |
 | Discovery | `POST/GET /ontologies/{id}/discovery-runs`, `GET /discovery-runs/{id}` |
-| Governance | `GET /ontologies/{id}/proposals`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
+| Governance | `GET /ontologies/{id}/proposals?status=&type=&run_id=&origin=&kg_build_id=`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
 | Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|json`, `GET /ontologies/{id}/compare` |
+| KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
+| KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
+| Facts & entities | `GET /kg/builds/{id}/facts?status=&kind=&source_id=&predicate_id=&q=`, `GET /kg/facts/{id}`, `GET /kg/builds/{id}/entities?q=&method=`, `GET /kg/entities/{id}` |
+| Graph | `GET /kg/builds/{id}/graph?class_id=&predicate_id=&source_id=`, `GET /kg/builds/{id}/graph/search?q=`, `GET /kg/builds/{id}/graph/nodes/{vid}/neighborhood`, `GET /kg/builds/{id}/graph/elements/{eid}` (with provenance) |
+| Evaluation & feedback | `GET /kg/builds/{id}/evaluation`, `GET /kg/builds/{id}/gaps`, `POST /kg/builds/{id}/gaps/proposals` |
 
-### 4.8 Runtime
+### 4.9 Runtime
 
-* `create_app(settings)` builds the engine, session factory, LLM provider (or `None`) and artifact
-  repository per instance; tests replace the provider with a scripted test double.
-* Startup applies migrations (`OLS_AUTO_MIGRATE`), fails interrupted discovery runs and seeds the
-  demo project into an empty database.
+* `create_app(settings)` builds the engine, session factory, LLM provider (or `None`), artifact
+  repository and graph-store factory per instance; tests replace the provider with a scripted
+  test double.
+* Startup applies migrations (`OLS_AUTO_MIGRATE`), fails interrupted discovery runs and KG builds,
+  and seeds the demo project into an empty database.
 * Configuration is environment-driven (`.env.example`); the LLM API key is a secret value that is
   never logged or returned by the API.
 
 ## 5. Frontend
 
 Navigation keeps exactly three sections (Project Workspace, Ontology Studio, Knowledge Graph
-Studio). All Phase 2 functionality lives in **Ontology Studio** tabs:
+Studio). Phase 2 functionality lives in **Ontology Studio** tabs:
 
 | Tab | Capabilities |
 |---|---|
@@ -246,8 +389,18 @@ Studio). All Phase 2 functionality lives in **Ontology Studio** tabs:
 The reviewer identifies themselves once (stored locally); the name is recorded on decisions,
 comments, applications and publications. Applying and publishing are blocked while the designer
 has unsaved changes; after applying, the draft reloads into the designer. The header shows the
-latest published version, and the workspace summarises pending reviews, versions and sources with
-links into the studio.
+latest published version, and the workspace summarises pending reviews, versions, data sources
+(with preview) and the latest KG build with links into the studios.
+
+All Phase 3 functionality lives in **Knowledge Graph Studio** (build selector in the header,
+`?build=` and `?tab=` in the URL):
+
+| Tab | Capabilities |
+|---|---|
+| Pipeline | Configuration panel (published version with its classes/relationships, source selection and upload, preview, per-source mapping editor with preview, suggestion and live validation, extraction settings, configured LLM, readiness messages, save/start), execution status (nine stages with status, timing and summaries, real counts, errors, polled log), rebuild with another published version, build history and build comparison. |
+| Graph Explorer | Cytoscape.js canvas of the persisted graph (class colours, directed labelled edges, pan/zoom, layout, fit), entity search, class / relationship / source filters, table fallback, and a right-hand drawer for nodes (class, identifier, attributes, relationships) and relationships (subject → predicate → object) with traceability (build, ontology version) and every supporting fact's validation checks and source evidence (original record or page text with the quote highlighted). |
+| Fact Validation | All candidate facts with status filters (accepted / rejected / quarantined), kind, source and text filters, evidence status and first reason; drawer with ontology property, structural / evidence / resolution checks and source excerpts. |
+| Evaluation & Feedback | Metric cards with definitions and numerator/denominator, failure-reason breakdown, ontology gaps with evidence and proposal status, "Create change proposals" into SME Review. |
 
 ## 6. Extension points
 
@@ -256,9 +409,5 @@ links into the studio.
 | `LLMProvider` | `OpenAICompatibleProvider` (tests: scripted double) | Structured output + repair; swap via configuration. |
 | `DocumentParser` | `PlainTextParser`, `PdfParser` | Add OCR/Office parsers without touching callers. |
 | `OntologyArtifactRepository` | `FilesystemArtifactRepository` | Blob storage (e.g. Azure Blob with immutability policies) later. |
-| `GraphStore` | Phase 3 | Local graph first, Azure Cosmos DB Gremlin adapter later. |
-
-Phase 3 adds the KG candidate-fact model (subject, predicate, object/literal, source location,
-ontology **version**, extraction run, validation status and reasons), structural fact validation
-and evidence grounding as separate dimensions, graph persistence and exploration, and evaluation
-that generates change proposals into the existing SME review queue.
+| `StructuredSource` / `TextSource` | `CsvDocumentSource`, `DocumentTextSource` | A Snowflake connector implements `StructuredSource` (columns + streamed records). |
+| `GraphStore` | `SqlGraphStore` | Azure Cosmos DB Gremlin adapter: vertex/edge labels and properties map 1:1, `graph_id` becomes the partition key, upserts use `fold().coalesce(unfold(), addV())`. Not implemented or claimed yet. |

@@ -31,4 +31,18 @@ export const queryKeys = {
   publishPreview: (ontologyId: string) => ['ontologies', ontologyId, 'publish-preview'] as const,
   compare: (ontologyId: string, base: string, target: string) =>
     ['ontologies', ontologyId, 'compare', base, target] as const,
+  version: (ontologyId: string, versionId: string) => ['ontologies', ontologyId, 'versions', versionId] as const,
+  kgVersions: (projectId: string) => ['projects', projectId, 'kg', 'versions'] as const,
+  kgMappings: (projectId: string) => ['projects', projectId, 'kg', 'mappings'] as const,
+  kgBuilds: (projectId: string) => ['projects', projectId, 'kg', 'builds'] as const,
+  kgBuild: (buildId: string) => ['kg-builds', buildId] as const,
+  kgLogs: (buildId: string) => ['kg-builds', buildId, 'logs'] as const,
+  kgFacts: (buildId: string, params: Record<string, string | undefined>) => ['kg-builds', buildId, 'facts', params] as const,
+  kgFact: (factId: string) => ['kg-facts', factId] as const,
+  kgGraph: (buildId: string, params: Record<string, string[] | undefined>) => ['kg-builds', buildId, 'graph', params] as const,
+  kgElement: (buildId: string, elementId: string) => ['kg-builds', buildId, 'element', elementId] as const,
+  kgEvaluation: (buildId: string) => ['kg-builds', buildId, 'evaluation'] as const,
+  kgGaps: (buildId: string) => ['kg-builds', buildId, 'gaps'] as const,
+  kgCompare: (base: string, target: string) => ['kg-compare', base, target] as const,
+  sourcePreview: (documentId: string) => ['sources', documentId, 'preview'] as const,
 }

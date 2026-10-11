@@ -143,11 +143,12 @@ a prefilled relationship dialog; deletion goes through the inspector with confir
 changes on restart.
 
 ## ADR-014 Defer PySHACL and graph dependencies to the phase that uses them
-**Status:** Accepted (updated in Phase 2)
+**Status:** Accepted (updated in Phase 3)
 
 **Decision.** Each phase installs only what it uses. Phase 2 added RDFLib (export), pypdf (PDF
-text), python-multipart (uploads) and httpx2 (LLM HTTP). PySHACL and graph clients arrive with
-Phase 3.
+text), python-multipart (uploads) and httpx2 (LLM HTTP). Phase 3 adds only Cytoscape.js on the
+frontend; it needed no new backend dependency (see ADR-027 for SHACL and ADR-028 for graph
+storage).
 
 ## ADR-015 Tooling choices
 **Status:** Accepted
@@ -265,3 +266,121 @@ Replace with the authenticated principal when identity is introduced.
 `DocumentParser` protocol, de-duplicated per project by SHA-256 and stored as text plus
 offset/page-tracked chunks; the original file is not retained. Evidence stores its own quote,
 context, document name and page, so deleting a document never removes review evidence.
+
+---
+
+# Phase 3 decisions
+
+## ADR-026 Builds bind to one immutable published version
+**Status:** Accepted (Phase 3)
+
+**Context.** A knowledge graph is only as trustworthy as the schema it was validated against, and
+drafts change continuously.
+
+**Decision.** A KG build accepts only an `ontology_version_id` (drafts are refused with
+`PUBLISHED_VERSION_REQUIRED`); the version row is referenced with `RESTRICT`. Starting a build
+freezes a configuration snapshot (version and content hash, source hashes, mapping specs, LLM
+provider/model/prompt version). Configuration is editable only before start; executed builds are
+retained and cannot be deleted. A rebuild is a new build (linked by `parent_build_id`) and never
+mutates an earlier build or its graph.
+
+**Consequences.** Every fact, node and edge is traceable to one version and one build; comparing
+builds across versions is meaningful.
+
+## ADR-027 Deterministic per-fact structural validation instead of SHACL
+**Status:** Accepted (Phase 3)
+
+**Context.** The requirement is per-fact verdicts with explicit reasons (including "direction
+reversed") against a published snapshot whose constraints are classes, subclass hierarchy,
+domain/range and XSD datatypes. SHACL (PySHACL) validates whole RDF graphs and reports shape
+violations that would then have to be mapped back to candidate facts; it adds a dependency and
+does not detect reversal.
+
+**Decision.** Implement structural validation as pure Python checks against `OntologyView`
+(class/predicate existence and kind, references, identifiers, domain/range with inheritance,
+literal datatypes) with one persisted check result per rule. Reversal is detected (the swapped
+endpoints would satisfy the signature) and reported, but the fact is rejected and never repaired.
+
+**Consequences.** Fast, explainable, unit-tested validation reusing the canonical model. SHACL
+export remains possible later from the same snapshot if shapes become a requirement.
+
+## ADR-028 Durable SQL graph adapter behind a Gremlin-shaped `GraphStore`
+**Status:** Accepted (Phase 3)
+
+**Context.** The enterprise target is Azure Cosmos DB (Gremlin API). No Neo4j, Gremlin or Cosmos
+connection, credential or client library exists in the environment (checked: no settings, no
+packages, ports 7687/7474/8182 closed).
+
+**Decision.** Define a provider-independent `GraphStore` protocol (idempotent vertex/edge upserts,
+fetch, search, neighbourhood, provenance, counts) and implement `SqlGraphStore` on the existing
+database (`graph_vertices`, `graph_edges` keyed by `(graph_id, id)`). The data model is the
+TinkerPop property graph: vertex label = class local name, edge label = property local name,
+properties, plus `fact_ids`/`source_ids` provenance. `graph_id` (= build id) maps to a Cosmos
+partition key. Vertex ids are stable hashes of class + business key; edge ids hash
+(subject, predicate, object), so duplicates merge and provenance accumulates.
+
+**Consequences.** Durable, transactional, testable graph persistence with no new infrastructure.
+A Cosmos adapter implements the same protocol; Cosmos integration is **not** claimed until a real
+connection is verified. The SQL adapter is sized for MVP graphs (thousands of elements).
+
+## ADR-029 Deterministic orchestrator with persisted stages
+**Status:** Accepted (Phase 3)
+
+**Decision.** A plain Python workflow (`kg/orchestrator.py`) runs the nine stages in a FastAPI
+background task, writing stage status, timings, counts and log lines in short independent
+transactions, so the UI reports actual progress (completed stages and LLM batch numbers - no
+synthetic percentages). Failures mark the stage and build failed and skip later stages; builds
+running at shutdown are failed on startup. One active build per project. No Celery, Redis, Kafka
+or LangGraph (none exist in the codebase and none are needed for this workload).
+
+**Consequences.** Simple and observable. Long CPU-bound LLM batches occupy one worker thread; a
+durable queue becomes appropriate when builds must survive restarts or scale out.
+
+## ADR-030 Structured sources use deterministic, generic mappings
+**Status:** Accepted (Phase 3)
+
+**Decision.** Records are transformed by saved mappings that reference columns and ontology
+element ids only (no business concepts, no LLM per row). Classes and predicates may be read from
+columns (edge lists) and are resolved against the selected version; unknown values become gaps.
+Entity mappings can be "reference only" (a foreign key that does not establish the entity).
+Mappings are validated against the build's version at save time and again at start. A
+column-name based suggestion is offered but always saved by an SME. Sources are read through the
+`StructuredSource` protocol so a Snowflake connector can replace the CSV source.
+
+## ADR-031 Evidence validation is separate from structure and conservative
+**Status:** Accepted (Phase 3)
+
+**Decision.** Evidence is evaluated independently of structural validity. Structured facts are
+supported by their record; LLM facts need a quote located verbatim (or with strict fuzzy matching)
+in the source chunk that mentions both entities (or contains the attribute value). Endpoints must
+be established by a master record or a located mention - a key referenced by only one row is not.
+Not located / weak evidence → QUARANTINED; no evidence → REJECTED. No LLM self-assessment is used:
+a model judging its own extraction is not evidence.
+
+**Consequences.** Coreference ("it supplies…") and paraphrase are quarantined rather than
+accepted - a deliberate precision-over-recall trade-off that SMEs can review.
+
+## ADR-032 Entity resolution never merges on similarity
+**Status:** Accepted (Phase 3)
+
+**Decision.** Merge by business key (class + key namespace + normalised identifier; text mentions
+may match a compatible sub/superclass), then by exact normalised label or configured alias against
+exactly one identified entity of a compatible class. Multiple candidates produce an ambiguous
+entity whose facts are quarantined; no fuzzy or embedding similarity is used to merge.
+
+## ADR-033 Ontology gaps feed the existing governance workflow
+**Status:** Accepted (Phase 3)
+
+**Decision.** Gaps (unknown classes, relationships, attributes, unmapped fields) are persisted per
+build with evidence. On request they become ADD findings aligned against the ontology's current
+draft (Phase 2 `align_findings`, so duplicates become REUSE/ALIAS) and are stored as pending
+proposals with `origin = kg_build` and `kg_build_id` (migration `0003`). Selected relationship gaps
+include the unknown classes they depend on, linked through proposal dependencies. Nothing is
+applied or published automatically; a newly published version simply becomes selectable for the
+next build.
+
+## ADR-034 PDF chunks never span pages
+**Status:** Accepted (Phase 3)
+
+**Decision.** PDF text is chunked per page (`chunk_pages`), so each chunk - and every quote located
+in it - carries an exact page number for provenance. Text formats keep paragraph-aware chunking.

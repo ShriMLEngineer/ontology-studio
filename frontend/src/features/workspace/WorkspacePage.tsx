@@ -6,6 +6,9 @@ import {
   Box,
   CheckCircle2,
   Database,
+  Eye,
+  FileSpreadsheet,
+  FileText,
   FolderPlus,
   GitBranch,
   ListChecks,
@@ -27,8 +30,10 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Skeleton } from '@/components/ui/skeleton'
 import { CreateProjectDialog } from '@/features/projects/CreateProjectDialog'
 import { useProjectScope } from '@/features/projects/hooks'
-import { governanceApi, projectsApi, registryApi, sourcesApi, validationApi } from '@/lib/api/endpoints'
-import type { ActivityEvent } from '@/lib/api/types'
+import { isTabular } from '@/features/kg/hooks'
+import { SourcePreviewDialog } from '@/features/kg/SourcePreviewDialog'
+import { governanceApi, kgApi, projectsApi, registryApi, sourcesApi, validationApi } from '@/lib/api/endpoints'
+import type { ActivityEvent, SourceDocument } from '@/lib/api/types'
 import { dateTime, plural, relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 
@@ -100,6 +105,13 @@ export function WorkspacePage() {
     queryFn: () => sourcesApi.list(projectId),
     enabled: Boolean(projectId),
   })
+  const builds = useQuery({
+    queryKey: queryKeys.kgBuilds(projectId),
+    queryFn: () => kgApi.builds(projectId),
+    enabled: Boolean(projectId),
+  })
+  const [previewing, setPreviewing] = useState<SourceDocument | null>(null)
+  const latestBuild = builds.data?.[0]
 
   if (!project) return <LoadingState />
   const studioTab = (tab: string) =>
@@ -322,23 +334,72 @@ export function WorkspacePage() {
             />
             <StatusRow
               icon={<Database />}
-              title="Source documents"
-              detail={`${plural(sources.data?.length ?? 0, 'document')} for AI discovery · KG ingestion arrives in Phase 3`}
+              title="Data sources"
+              detail={
+                sources.data
+                  ? `${plural(sources.data.filter((s) => isTabular(s.media_type)).length, 'structured source')} and ${plural(
+                      sources.data.filter((s) => !isTabular(s.media_type)).length,
+                      'document',
+                    )} for AI discovery and knowledge graph builds`
+                  : 'Loading sources…'
+              }
               badge={
                 <Button variant="outline" size="xs" asChild>
-                  <Link to={studioTab('discovery')}>Discover</Link>
+                  <Link to={`/projects/${project.id}/knowledge-graph?tab=pipeline`}>Manage</Link>
                 </Button>
               }
             />
             <StatusRow
               icon={<Waypoints />}
               title="Latest KG build"
-              detail="No knowledge graph has been built."
-              badge={<Badge variant="outline">Phase 3</Badge>}
+              detail={
+                latestBuild
+                  ? `#${latestBuild.number} ${latestBuild.status} with ${latestBuild.ontology_name} v${latestBuild.ontology_version}` +
+                    (latestBuild.stats.facts
+                      ? ` · ${latestBuild.stats.facts.by_status.accepted ?? 0} accepted, ${latestBuild.stats.facts.by_status.rejected ?? 0} rejected, ${latestBuild.stats.facts.by_status.quarantined ?? 0} quarantined facts`
+                      : '') +
+                    (latestBuild.stats.graph ? ` · ${latestBuild.stats.graph.nodes} nodes, ${latestBuild.stats.graph.edges} edges` : '')
+                  : 'No knowledge graph has been built.'
+              }
+              badge={
+                <Button variant="outline" size="xs" asChild>
+                  <Link to={`/projects/${project.id}/knowledge-graph${latestBuild ? `?build=${latestBuild.id}` : ''}`}>
+                    {latestBuild ? 'Open' : 'Build'}
+                  </Link>
+                </Button>
+              }
             />
           </CardContent>
         </Card>
       </div>
+
+      {sources.data && sources.data.length > 0 && (
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle>Data sources</CardTitle>
+            <CardDescription>Uploaded once and reused by AI discovery (Ontology Studio) and knowledge graph builds.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-label="Data sources">
+              {sources.data.map((doc) => (
+                <li key={doc.id} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+                  {isTabular(doc.media_type) ? (
+                    <FileSpreadsheet className="size-4 shrink-0 text-emerald-600" />
+                  ) : (
+                    <FileText className="size-4 shrink-0 text-sky-600" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{doc.filename}</span>
+                  <span className="text-xs text-muted-foreground">{relativeTime(doc.created_at)}</span>
+                  <Button variant="ghost" size="icon-xs" aria-label={`Preview ${doc.filename}`} onClick={() => setPreviewing(doc)}>
+                    <Eye />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+      {previewing && <SourcePreviewDialog document={previewing} onClose={() => setPreviewing(null)} />}
 
       <CreateProjectDialog open={creating} onOpenChange={setCreating} />
     </div>

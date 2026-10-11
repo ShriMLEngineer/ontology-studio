@@ -7,7 +7,7 @@ phase ends at a verified, runnable milestone that is safe to commit.
 |---|---|---|
 | 1 | Application foundation & ontology designer | **Complete - verified** |
 | 2 | AI-assisted discovery & governance | **Complete - verified** |
-| 3 | Knowledge-graph construction & exploration | Planned |
+| 3 | Knowledge-graph engineering, visualisation, evaluation & feedback | **Complete - verified** |
 
 ---
 
@@ -101,29 +101,72 @@ Quality gates: `pytest` (127 tests), `ruff check`, `npm run build`, `npm run lin
 
 ---
 
-## Phase 3 - Knowledge-graph construction & exploration (Day 3)
+## Phase 3 - Knowledge-graph engineering, visualisation, evaluation & feedback (Day 3)
 
-**Goal:** documents/records + published ontology → validated facts → explorable, traceable graph.
+**Goal:** sources + a published ontology version → validated, traceable facts → persisted,
+explorable graph → quality indicators → ontology gaps fed back into SME review → new version →
+rebuild.
 
-1. **Data sources** - PDF and small structured datasets (CSV/JSON) per project; Snowflake
-   connector interface stubbed for a later phase.
-2. **Extraction runs** - choose sources and a *published* ontology version; schema-guided LLM
-   extraction of entities and relationships into the normalised candidate-fact model (subject,
-   predicate, object or literal, source location, evidence, ontology version, run id); deterministic
-   mapping for structured records; run progress and logs.
-3. **Entity resolution** - normalisation and alias-based merging with confidence and audit.
-4. **Fact validation** - structural domain/range/datatype checks independent of the LLM (plus
-   SHACL shapes generated from the ontology via PySHACL); evidence-grounding check as a separate
-   dimension; facts accepted, rejected or quarantined with reasons; invalid directions are never
-   auto-reversed.
-5. **Graph persistence** - `GraphStore` protocol with a local implementation (SQLite tables /
-   NetworkX) and a Cosmos DB Gremlin adapter behind configuration.
-6. **Graph explorer** - Cytoscape.js view with search, class/relation/source filters, node/edge
-   inspector and provenance back to source documents.
-7. **Evaluation & feedback** - coverage and quality metrics, rejected-fact analysis, missing
-   concept detection, and generation of ontology change proposals that enter the Phase 2 review
-   queue.
+### Pre-implementation findings
 
-**Exit criteria:** a KG build over the sample data shows accepted/rejected/quarantined facts with
-reasons, the graph is explorable with provenance, and evaluation produces at least one ontology
-improvement proposal visible in SME Review.
+* Reusable: published snapshots (`OntologySnapshot`) as schema authority, Phase 2 source documents
+  and page-aware chunks, `ground_quote`, `normalize_term`/`align_findings`, `persist_drafts`, the
+  `LLMProvider` abstraction, the background-run pattern and the activity log.
+* No graph database, Gremlin/Cosmos client, Neo4j or PySHACL in the environment → durable SQL
+  graph adapter behind a Gremlin-shaped protocol (ADR-028) and deterministic structural validation
+  (ADR-027). No orchestration framework → deterministic orchestrator (ADR-029).
+* Migration `0003`: KG tables, graph tables and `change_proposals.origin` / `kg_build_id`
+  (batch-altered on SQLite without losing evidence or events - tested).
+
+### Milestones (each verified and committed)
+
+| # | Milestone | Verification |
+|---|---|---|
+| 3.1 | Source connectors and CSV preview, generic mappings (validation, suggestion, CRUD), published-version enforcement, build configuration and readiness, migration `0003`, sample data | `test_kg_foundation.py`; migration data-preservation test |
+| 3.2 | LLM extraction contract and prompt, deterministic mapping transform, entity resolution, structural and evidence validation, persisted candidate facts, nine-stage orchestrator | `test_kg_pipeline.py`, `test_kg_extraction.py` (scripted LLM), `test_kg_units.py` |
+| 3.3 | `GraphStore` + `SqlGraphStore`, graph APIs with provenance, rebuild isolation | Graph store unit tests (idempotency, isolation, integrity); API tests |
+| 3.4 | Evaluation metrics, ontology gaps, gap → SME proposal, build comparison | Gap → proposal → approve → publish v1.1.0 → rebuild API test |
+| UI | Knowledge Graph Studio: Pipeline, Graph Explorer (Cytoscape.js), Fact Validation, Evaluation & Feedback; KG feedback in SME Review; workspace data sources and KG status | Type check, lint, build; Phase 3 E2E (structured-only and real LLM); Phase 1/2 E2E regression |
+
+### Scope delivered
+
+| Area | Delivered |
+|---|---|
+| Data sources | Reuses Phase 2 ingestion (PDF/text with pages, CSV/TSV). `StructuredSource` / `TextSource` connector protocols (Snowflake-ready); CSV records with row numbers and raw lines; column profiles with inferred XSD types; preview in KG Studio and Project Workspace; PDF chunks never span pages. |
+| Mappings | Generic spec (fixed class or class column, identifier/label/alias columns, key namespace, reference-only entities, attribute → datatype property, relationships with fixed or column-provided predicate); validation against a version (errors / warnings); deterministic suggestion; saved and reusable. |
+| Builds | Published versions only; readiness checks; frozen configuration snapshot; nine persisted stages with timing, counts and logs; history; rebuild with another version; comparison; interrupted-build recovery. |
+| LLM extraction | Snapshot-constrained prompt, Pydantic `LLMExtractionResponse`, id/label resolution against the version, quote location in the source, unknown concepts → gaps (only with located evidence), validated outputs kept for audit. |
+| Entity resolution | Business key, compatible-class key match, alias/label match to exactly one entity, ambiguity flagged, persisted decisions and mentions. |
+| Fact validation | Independent structural, evidence and resolution checks; ACCEPTED / REJECTED / QUARANTINED with persisted reasons; reversal detected and never repaired; literal datatype checks; single-value conflicts quarantined. |
+| Graph | `GraphStore` protocol; `SqlGraphStore` with idempotent upserts, build scoping, search, neighbourhood, provenance; only accepted facts stored. |
+| Explorer | Cytoscape.js canvas, layout/fit/zoom, search, class / relationship / source filters, table fallback, details drawer with traceability and evidence. |
+| Evaluation | Metrics with explicit numerator/denominator/definition; failure-reason breakdown; explicit statement that precision/recall are not measured. |
+| Feedback | Gaps → aligned, evidence-backed pending proposals (`origin = kg_build`) in SME Review; dependency-linked class + relationship proposals; status shown back on the gap. |
+
+### Acceptance criteria (verified)
+
+| Requirement | Verified by |
+|---|---|
+| Select sources, choose an approved version, configure and save a build | `test_build_configuration_is_saved_and_checked_for_readiness`; E2E steps 2-5 |
+| Draft / unpublished versions cannot be used | `test_only_published_versions_are_selectable` (`PUBLISHED_VERSION_REQUIRED`); E2E step 2 |
+| Extracted facts visible with accepted / rejected / quarantined status and reasons | `test_kg_pipeline.py`, `test_kg_extraction.py`; E2E steps 6-8 |
+| Reversed relationship rejected (never repaired) | `test_reversed_relationship_is_rejected_and_never_repaired`, LLM variant in `test_text_facts_are_validated_against_structure_and_evidence`; E2E step 7 |
+| Inadequately evidenced fact quarantined | `test_relationship_to_an_unestablished_entity_is_quarantined`, unlocated / weak / ambiguous LLM facts; E2E step 8 |
+| Persisted graph explorable; relationships traceable to sources | `test_graph_contains_only_accepted_facts_and_supports_exploration`, `test_duplicate_facts_merge_into_one_edge_with_multiple_provenance`; E2E steps 9-11 |
+| Metrics with explicit definitions | `test_evaluation_metrics_state_denominators`; E2E step 12 |
+| Gap → SME-reviewable proposal → approve → publish → rebuild without losing the earlier build | `test_gap_to_proposal_to_new_version_and_isolated_rebuild`; E2E steps 13-17 |
+| Idempotent graph writes, rebuild isolation, version traceability | `test_kg_units.py` graph store tests; isolation assertions in API and E2E tests |
+| LLM output normalisation, unsupported predicates, missing evidence, duplicates, ambiguity | `test_kg_extraction.py`, `test_kg_units.py` |
+
+Quality gates: `pytest` (169 tests, 42 new for Phase 3), `ruff check`, `alembic check` (no drift),
+`npm run build` (KG Studio is a lazily loaded chunk), `npm run lint`, `npm run e2e:journey`
+(15 steps), `npm run e2e:governance` (15 steps, real LLM) and `npm run e2e:kg` (17 steps; with the
+real `qwen2.5:7b` the PDF batch took ~6 minutes on CPU and produced 13 text facts - 6 accepted,
+3 rejected (two reversed relationships), 4 quarantined (paraphrased or non-supporting quotes)).
+
+### Deferred
+
+* Azure Cosmos DB Gremlin adapter (protocol and mapping designed, ADR-028) and a Snowflake
+  `StructuredSource` connector - no credentials or connectivity in this environment.
+* SHACL shapes / RDF export of the knowledge graph; multi-column identifiers and cross-file joins in
+  mappings; LLM-assisted evidence review for quarantined facts.

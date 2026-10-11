@@ -2,15 +2,32 @@ import { apiUrl, http } from '@/lib/api/client'
 import type {
   ActivityEvent,
   ApplyResult,
+  BuildComparison,
+  BuildCreate,
+  BuildDetail,
+  BuildLog,
+  BuildSummary,
   Decision,
   DiscoveryRun,
   DiscoveryRunCreate,
   DraftSaveRequest,
   DraftSaveResponse,
+  EntityDetail,
+  Evaluation,
+  FactDetail,
+  FactPage,
+  GapProposalResult,
+  GraphData,
+  GraphElementDetail,
+  GraphNode,
   Health,
   LLMStatus,
+  MappingIssue,
+  MappingSpec,
+  MappingSuggestion,
   Ontology,
   OntologyDraft,
+  OntologyGap,
   Project,
   ProjectCreate,
   ProposalDetail,
@@ -18,12 +35,16 @@ import type {
   ProposalStats,
   ProposalSummary,
   ProposalUpdate,
+  PublishedVersionOption,
   PublishPreview,
   PublishRequest,
   SchemaDiff,
   SourceDocument,
+  SourceMapping,
+  SourcePreview,
   ValidationReport,
   VersionBump,
+  VersionDetail,
   VersionSummary,
 } from '@/lib/api/types'
 
@@ -92,6 +113,8 @@ export const governanceApi = {
 
 export const registryApi = {
   versions: (ontologyId: string) => http.get<VersionSummary[]>(`/ontologies/${enc(ontologyId)}/versions`),
+  get: (ontologyId: string, versionId: string) =>
+    http.get<VersionDetail>(`/ontologies/${enc(ontologyId)}/versions/${enc(versionId)}`),
   preview: (ontologyId: string, bump?: VersionBump) =>
     http.get<PublishPreview>(`/ontologies/${enc(ontologyId)}/publish-preview${bump ? `?bump=${bump}` : ''}`),
   publish: (ontologyId: string, body: PublishRequest) =>
@@ -100,4 +123,66 @@ export const registryApi = {
     http.get<SchemaDiff>(`/ontologies/${enc(ontologyId)}/compare?base=${enc(base)}&target=${enc(target)}`),
   exportUrl: (ontologyId: string, versionId: string, format: 'turtle' | 'json') =>
     apiUrl(`/ontologies/${enc(ontologyId)}/versions/${enc(versionId)}/export?format=${format}`),
+}
+
+function query(params: Record<string, string | string[] | number | undefined | null>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue
+    for (const item of Array.isArray(value) ? value : [value]) search.append(key, String(item))
+  }
+  const text = search.toString()
+  return text ? `?${text}` : ''
+}
+
+export const kgApi = {
+  preview: (documentId: string) => http.get<SourcePreview>(`/sources/${enc(documentId)}/preview`),
+  versions: (projectId: string) => http.get<PublishedVersionOption[]>(`/projects/${enc(projectId)}/kg/ontology-versions`),
+  mappings: (projectId: string) => http.get<SourceMapping[]>(`/projects/${enc(projectId)}/kg/mappings`),
+  suggestMapping: (documentId: string, versionId: string) =>
+    http.get<MappingSuggestion>(`/sources/${enc(documentId)}/mapping-suggestion${query({ ontology_version_id: versionId })}`),
+  validateMapping: (projectId: string, body: { document_id: string; ontology_version_id: string; spec: MappingSpec }) =>
+    http.post<{ valid: boolean; issues: MappingIssue[] }>(`/projects/${enc(projectId)}/kg/mappings/validate`, body),
+  createMapping: (
+    projectId: string,
+    body: { document_id: string; ontology_version_id: string; name: string; description?: string; spec: MappingSpec; updated_by: string },
+  ) => http.post<SourceMapping>(`/projects/${enc(projectId)}/kg/mappings`, body),
+  updateMapping: (
+    mappingId: string,
+    body: { ontology_version_id?: string; name?: string; description?: string; spec?: MappingSpec; updated_by: string },
+  ) => http.put<SourceMapping>(`/kg/mappings/${enc(mappingId)}`, body),
+  deleteMapping: (mappingId: string) => http.delete(`/kg/mappings/${enc(mappingId)}`),
+
+  builds: (projectId: string) => http.get<BuildSummary[]>(`/projects/${enc(projectId)}/kg/builds`),
+  build: (buildId: string) => http.get<BuildDetail>(`/kg/builds/${enc(buildId)}`),
+  createBuild: (projectId: string, body: BuildCreate) => http.post<BuildDetail>(`/projects/${enc(projectId)}/kg/builds`, body),
+  updateBuild: (buildId: string, body: Partial<Omit<BuildCreate, 'requested_by' | 'start'>>) =>
+    http.patch<BuildDetail>(`/kg/builds/${enc(buildId)}`, body),
+  deleteBuild: (buildId: string) => http.delete(`/kg/builds/${enc(buildId)}`),
+  startBuild: (buildId: string, requestedBy: string) =>
+    http.post<BuildDetail>(`/kg/builds/${enc(buildId)}/start`, { requested_by: requestedBy }),
+  rebuild: (buildId: string, versionId: string, requestedBy: string) =>
+    http.post<BuildDetail>(`/kg/builds/${enc(buildId)}/rebuild`, { ontology_version_id: versionId, requested_by: requestedBy }),
+  logs: (buildId: string, after = 0) => http.get<BuildLog[]>(`/kg/builds/${enc(buildId)}/logs${query({ after })}`),
+  compare: (base: string, target: string) => http.get<BuildComparison>(`/kg/compare${query({ base, target })}`),
+
+  facts: (buildId: string, params: { status?: string; kind?: string; source_id?: string; q?: string } = {}) =>
+    http.get<FactPage>(`/kg/builds/${enc(buildId)}/facts${query(params)}`),
+  fact: (factId: string) => http.get<FactDetail>(`/kg/facts/${enc(factId)}`),
+  entity: (entityId: string) => http.get<EntityDetail>(`/kg/entities/${enc(entityId)}`),
+
+  graph: (buildId: string, params: { class_id?: string[]; predicate_id?: string[]; source_id?: string[] } = {}) =>
+    http.get<GraphData>(`/kg/builds/${enc(buildId)}/graph${query(params)}`),
+  search: (buildId: string, q: string) => http.get<GraphNode[]>(`/kg/builds/${enc(buildId)}/graph/search${query({ q })}`),
+  element: (buildId: string, elementId: string) =>
+    http.get<GraphElementDetail>(`/kg/builds/${enc(buildId)}/graph/elements/${enc(elementId)}`),
+
+  evaluation: (buildId: string) => http.get<Evaluation>(`/kg/builds/${enc(buildId)}/evaluation`),
+  gaps: (buildId: string) => http.get<OntologyGap[]>(`/kg/builds/${enc(buildId)}/gaps`),
+  proposeGaps: (buildId: string, gapIds: string[], requestedBy: string, comment: string) =>
+    http.post<GapProposalResult>(`/kg/builds/${enc(buildId)}/gaps/proposals`, {
+      gap_ids: gapIds,
+      requested_by: requestedBy,
+      comment,
+    }),
 }
