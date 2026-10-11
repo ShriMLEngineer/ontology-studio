@@ -4,6 +4,7 @@ import { RouteError } from '@/app/RouteError'
 import { AppShell } from '@/components/layout/AppShell'
 import { OntologyStudioPage } from '@/features/ontology/OntologyStudioPage'
 import { RootRedirect } from '@/features/projects/RootRedirect'
+import { SettingsPage } from '@/features/settings/SettingsPage'
 import { WorkspacePage } from '@/features/workspace/WorkspacePage'
 
 export const router = createBrowserRouter([
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="workspace" replace /> },
       { path: 'workspace', element: <WorkspacePage /> },
       { path: 'ontology', element: <OntologyStudioPage /> },
+      { path: 'settings', element: <SettingsPage /> },
       {
         path: 'knowledge-graph',
         // Loaded on demand: the graph explorer (Cytoscape.js) is only needed in this section.

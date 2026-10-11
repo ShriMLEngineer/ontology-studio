@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronsLeft, ChevronsRight, LayoutDashboard, Network, Waypoints } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight, LayoutDashboard, Network, Settings, Waypoints } from 'lucide-react'
 import { NavLink } from 'react-router'
 import { cn } from 'cn'
 
@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { path: 'workspace', label: 'Project Workspace', icon: LayoutDashboard },
   { path: 'ontology', label: 'Ontology Studio', icon: Network },
   { path: 'knowledge-graph', label: 'Knowledge Graph Studio', icon: Waypoints },
+  { path: 'settings', label: 'Settings', icon: Settings },
 ] as const
 
 function readCollapsed(): boolean {

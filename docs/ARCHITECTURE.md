@@ -82,6 +82,7 @@ flowchart LR
 | 6 | Registry & publishing | `registry` | ✔ Phase 2 (snapshots are the KG schema authority); Phase 4 `ols-semantic/2` packages |
 | 6b | Standards semantics (RDF/OWL import & export, preserved axioms, reasoning) | `semantics` | ✔ Phase 4.1 |
 | 6c | SHACL shapes (generation, authoring, PySHACL engine) and validation policies | `shacl`, `kg.policy`, `kg.rdf_candidates` | ✔ Phase 4.2 |
+| 11 | Settings: LLM configurations, graph database connections, project defaults | `settings`, `graph.targets` | ✔ Phase 4 |
 | 7 | KG extraction | `kg.mapping`, `kg.extraction`, `kg.resolution` | ✔ Phase 3 |
 | 8 | Fact validation | `kg.validation` | ✔ Phase 3 (structural + evidence) |
 | 9 | Graph persistence & query | `graph`, `kg.queries` | ✔ Phase 3 (`SqlGraphStore`) |
@@ -157,6 +158,9 @@ erDiagram
 | `ontology_shapes` | Authored SHACL node shapes of the draft (target class, severity, message, property constraints as JSON). Generated shapes are derived; imported SHACL lives in `ontology_extension_axioms` (scope `shapes`). |
 | `kg_candidate_facts.lanes` | Phase 4 per-fact lanes: policy (id, relaxed application checks), SHACL results with outcomes, entailment checks and inferred types. NULL for builds evaluated before Phase 4. |
 | `projects.data_namespace` | Optional base for instance IRIs (`{data_namespace}e/{vertex_id}`); default `{ontology IRI}/data/`, frozen per build. |
+| `llm_configurations` | Registered OpenAI-compatible LLM endpoints (base URL, model, structured-output mode, temperature, timeout, token limit) with the **name** of the environment variable that holds the API key; last connection test. |
+| `graph_connections` | Registered graph databases (kind, non-secret configuration, environment variable for the password); last connection test. |
+| `projects.default_llm_config_id` / `default_graph_connection_id` | Project defaults; NULL = environment default LLM / local SQL graph. |
 | `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
 | `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
 | `kg_build_logs` | Append-only execution log per build and stage. |
@@ -300,6 +304,23 @@ structural validation); builds created earlier keep nine stages and are never re
 Under `application-strict/1` the outcome of every Phase 3 fact is unchanged (verified on the sample
 data: 51 accepted, 4 rejected, 2 quarantined); SHACL adds warnings for missing required values.
 
+### 4.6d Settings (Phase 4)
+
+* **Built-ins** are virtual: the *Environment default* LLM (`OLS_LLM_*`, read-only), the *Local SQL
+  property graph* and the *Embedded Oxigraph* RDF store (`OLS_OXIGRAPH_DIR`).
+* **Registered configurations** are shared by all projects. Secrets are referenced by environment
+  variable name only; the API reports whether the variable is set but never its value.
+* **Connection tests are real and read-only**: an LLM test calls the endpoint's `/models` API and
+  checks that the model is listed (no prompt is sent); graph tests count rows in the application
+  database, open the embedded store, or send `ASK` to a SPARQL endpoint. Failures are reported as
+  they occur.
+* **Resolution**: discovery runs and KG builds use their own selection, else the project default,
+  else the built-in. Builds freeze the effective LLM configuration, graph target and data namespace
+  in their configuration snapshot.
+* **Graph kinds** (`graph/targets`): `local-sql`, `oxigraph` (built-in), `sparql-http`
+  (registrable). Neo4j and Azure Cosmos DB (Gremlin) are listed as *not available* with the reason
+  (no reachable server to implement and verify an adapter against); they cannot be registered.
+
 ### 4.7 Knowledge-graph engineering (Phase 3)
 
 ```mermaid
@@ -427,6 +448,7 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | Governance | `GET /ontologies/{id}/proposals?status=&type=&run_id=&origin=&kg_build_id=`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
 | Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|rdfxml\|jsonld\|ntriples\|json\|manifest`, `GET /ontologies/{id}/compare` |
 | Semantics (Phase 4) | `GET /ontologies/{id}/rdf?format=&download=`, `POST(multipart) /projects/{id}/ontologies/import`, `GET /ontologies/{id}/imports`, `GET /ontologies/{id}/axioms`, `DELETE /ontologies/{id}/axioms/{aid}?deleted_by=`, `GET /ontologies/{id}/entailments` |
+| Settings (Phase 4) | `GET/POST /settings/llm-configurations`, `GET/PUT/DELETE /settings/llm-configurations/{id}`, `POST /settings/llm-configurations/{id}/test`, `GET /settings/graph-kinds`, `GET/POST /settings/graph-connections`, `GET/PUT/DELETE /settings/graph-connections/{id}`, `POST /settings/graph-connections/{id}/test`, `GET/PUT /projects/{id}/defaults`; `GET /llm/status?project_id=&config_id=` |
 | SHACL (Phase 4) | `GET/POST /ontologies/{id}/shapes`, `PUT/DELETE /ontologies/{id}/shapes/{sid}?actor=`, `GET /ontologies/{id}/shapes/rdf`, `POST /ontologies/{id}/shapes/validate`, `POST(multipart) /ontologies/{id}/shapes/import`, `GET /kg/validation-policies`; version export `format=shapes` |
 | KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
 | KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
@@ -446,8 +468,11 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 
 ## 5. Frontend
 
-Navigation keeps exactly three sections (Project Workspace, Ontology Studio, Knowledge Graph
-Studio). Phase 2 functionality lives in **Ontology Studio** tabs:
+Navigation has four sections: Project Workspace, Ontology Studio, Knowledge Graph Studio and - since
+Phase 4 - **Settings** (project defaults, LLM models and graph databases: register, edit, test and
+delete; kinds without an adapter are explained). Registered configurations are selectable when a
+project is created, when a discovery run is started and when a KG build is configured.
+Phase 2 functionality lives in **Ontology Studio** tabs:
 
 | Tab | Capabilities |
 |---|---|

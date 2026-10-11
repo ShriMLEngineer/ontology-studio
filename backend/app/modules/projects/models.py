@@ -14,3 +14,6 @@ class Project(TimestampMixin, Base):
     business_domain: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     # Base for knowledge-graph instance IRIs ({data_namespace}e/{vertex_id}); NULL = derived from the ontology IRI.
     data_namespace: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Registered configurations (Settings) or built-in ids; NULL = environment default LLM / local SQL graph.
+    default_llm_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    default_graph_connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

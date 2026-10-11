@@ -43,6 +43,8 @@ import { dateTime, plural, relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 import { ProposalTypeBadge } from '../governance/badges'
 import { useReviewerName } from '../governance/reviewer'
+import { useProjectDefaults } from '@/features/settings/hooks'
+import { LlmConfigSelect } from '@/features/settings/selectors'
 
 const ACCEPT = '.txt,.md,.markdown,.csv,.tsv,.json,.pdf'
 const DRAFT_BASELINE = 'draft'
@@ -69,10 +71,19 @@ function duration(fromIso: string | null, to: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-function ProviderCard() {
+function ProviderCard({
+  projectId,
+  configId,
+  onConfigChange,
+}: {
+  projectId: string
+  configId: string | null
+  onConfigChange: (configId: string | null) => void
+}) {
+  const defaults = useProjectDefaults(projectId)
   const status = useQuery({
-    queryKey: queryKeys.llmStatus,
-    queryFn: () => systemApi.llmStatus(true),
+    queryKey: queryKeys.llmStatusFor(projectId, configId),
+    queryFn: () => systemApi.llmStatus(true, { projectId, configId }),
     staleTime: 60_000,
     retry: false,
   })
@@ -89,6 +100,12 @@ function ProviderCard() {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
+        <LlmConfigSelect
+          aria-label="LLM configuration"
+          value={configId}
+          projectDefault={defaults.data?.effective_llm}
+          onChange={onConfigChange}
+        />
         {status.isPending ? (
           <LoadingState label="Checking provider…" className="min-h-12" />
         ) : status.isError ? (
@@ -380,8 +397,14 @@ export function DiscoveryView({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [baseline, setBaseline] = useState(DRAFT_BASELINE)
   const [instructions, setInstructions] = useState('')
+  const [llmConfigId, setLlmConfigId] = useState<string | null>(null)
 
-  const llm = useQuery({ queryKey: queryKeys.llmStatus, queryFn: () => systemApi.llmStatus(true), staleTime: 60_000, retry: false })
+  const llm = useQuery({
+    queryKey: queryKeys.llmStatusFor(projectId, llmConfigId),
+    queryFn: () => systemApi.llmStatus(true, { projectId, configId: llmConfigId }),
+    staleTime: 60_000,
+    retry: false,
+  })
   const versions = useQuery({ queryKey: queryKeys.versions(ontologyId), queryFn: () => registryApi.versions(ontologyId) })
   const runs = useQuery({
     queryKey: queryKeys.discoveryRuns(ontologyId),
@@ -414,6 +437,7 @@ export function DiscoveryView({
         baseline_version_id: baseline === DRAFT_BASELINE ? null : baseline,
         instructions,
         requested_by: reviewer,
+        llm_config_id: llmConfigId,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.discoveryRuns(ontologyId) })
@@ -440,7 +464,7 @@ export function DiscoveryView({
   return (
     <div className="mx-auto grid w-full max-w-7xl gap-6 p-6 lg:grid-cols-[400px_1fr]">
       <div className="space-y-4">
-        <ProviderCard />
+        <ProviderCard projectId={projectId} configId={llmConfigId} onConfigChange={setLlmConfigId} />
         <SourcesCard projectId={projectId} selected={selected} onToggle={toggle} onUploaded={(doc) => toggle(doc.id, true)} />
         <Card size="sm">
           <CardHeader>

@@ -15,6 +15,9 @@ import type {
   DraftSaveResponse,
   EntailmentReport,
   EntityDetail,
+  GraphConnection,
+  GraphConnectionInput,
+  GraphKind,
   ExtensionAxiomRead,
   Evaluation,
   FactDetail,
@@ -26,6 +29,8 @@ import type {
   Health,
   ImportResponse,
   LLMStatus,
+  LlmConfig,
+  LlmConfigInput,
   MappingIssue,
   MappingSpec,
   MappingSuggestion,
@@ -37,6 +42,8 @@ import type {
   OntologyImport,
   Project,
   ProjectCreate,
+  ProjectDefaults,
+  ProjectDefaultsUpdate,
   ProposalDetail,
   ProposalEvent,
   ProposalStats,
@@ -63,11 +70,17 @@ const enc = encodeURIComponent
 
 export const systemApi = {
   health: () => http.get<Health>('/health'),
-  llmStatus: (check = false) => http.get<LLMStatus>(`/llm/status${check ? '?check=true' : ''}`),
+  llmStatus: (check = false, scope: { projectId?: string; configId?: string | null } = {}) =>
+    http.get<LLMStatus>(
+      `/llm/status${query({ check: check ? 'true' : undefined, project_id: scope.projectId, config_id: scope.configId })}`,
+    ),
 }
 
 export const projectsApi = {
   list: () => http.get<Project[]>('/projects'),
+  defaults: (projectId: string) => http.get<ProjectDefaults>(`/projects/${enc(projectId)}/defaults`),
+  updateDefaults: (projectId: string, body: ProjectDefaultsUpdate, actor: string) =>
+    http.put<ProjectDefaults>(`/projects/${enc(projectId)}/defaults?actor=${enc(actor)}`, body),
   create: (body: ProjectCreate) => http.post<Project>('/projects', body),
   activity: (projectId: string, limit = 15) =>
     http.get<ActivityEvent[]>(`/projects/${enc(projectId)}/activity?limit=${limit}`),
@@ -256,4 +269,22 @@ export const shapesApi = {
       form,
     )
   },
+}
+
+export const settingsApi = {
+  llmConfigs: () => http.get<LlmConfig[]>('/settings/llm-configurations'),
+  createLlm: (body: LlmConfigInput, actor: string) =>
+    http.post<LlmConfig>(`/settings/llm-configurations?actor=${enc(actor)}`, body),
+  updateLlm: (id: string, body: LlmConfigInput, actor: string) =>
+    http.put<LlmConfig>(`/settings/llm-configurations/${enc(id)}?actor=${enc(actor)}`, body),
+  deleteLlm: (id: string, actor: string) => http.delete(`/settings/llm-configurations/${enc(id)}?actor=${enc(actor)}`),
+  testLlm: (id: string) => http.post<LlmConfig>(`/settings/llm-configurations/${enc(id)}/test`),
+  graphKinds: () => http.get<GraphKind[]>('/settings/graph-kinds'),
+  graphConnections: () => http.get<GraphConnection[]>('/settings/graph-connections'),
+  createGraph: (body: GraphConnectionInput, actor: string) =>
+    http.post<GraphConnection>(`/settings/graph-connections?actor=${enc(actor)}`, body),
+  updateGraph: (id: string, body: GraphConnectionInput, actor: string) =>
+    http.put<GraphConnection>(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`, body),
+  deleteGraph: (id: string, actor: string) => http.delete(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`),
+  testGraph: (id: string) => http.post<GraphConnection>(`/settings/graph-connections/${enc(id)}/test`),
 }

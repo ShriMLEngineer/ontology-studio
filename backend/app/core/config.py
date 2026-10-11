@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     # Immutable published ontology artifacts (JSON / Turtle).
     artifact_dir: Path = DEFAULT_DATA_DIR / "artifacts"
+    oxigraph_dir: Path = DEFAULT_DATA_DIR / "oxigraph"
 
     # OpenAI-compatible LLM endpoint (OpenAI, Azure OpenAI v1, Ollama, vLLM, LM Studio, ...).
     # Discovery is disabled until base URL and model are configured.

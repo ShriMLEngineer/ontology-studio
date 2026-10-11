@@ -22,6 +22,8 @@ import { FormField, NativeSelect } from '../fields'
 import { isTabular, useLlmStatus, useMappings, useSources, useValidationPolicies, useVersionSnapshot } from '../hooks'
 import { SourcePreviewDialog } from '../SourcePreviewDialog'
 import { MappingEditorDialog } from './MappingEditorDialog'
+import { useProjectDefaults } from '@/features/settings/hooks'
+import { GraphTargetSelect, LlmConfigSelect } from '@/features/settings/selectors'
 
 const DEFAULT_SETTINGS: BuildSettings = {
   max_chunks: 20,
@@ -53,8 +55,8 @@ export function BuildConfigPanel({
   const [reviewer] = useReviewerName()
   const sources = useSources(projectId)
   const mappings = useMappings(projectId)
-  const llm = useLlmStatus()
   const policies = useValidationPolicies()
+  const defaults = useProjectDefaults(projectId)
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -65,6 +67,7 @@ export function BuildConfigPanel({
     Object.fromEntries((build?.sources ?? []).filter((s) => s.mapping_id).map((s) => [s.id, s.mapping_id as string])),
   )
   const [settings, setSettings] = useState<BuildSettings>(build?.settings ?? DEFAULT_SETTINGS)
+  const llm = useLlmStatus(projectId, settings.llm_config_id ?? null)
   const [editing, setEditing] = useState<{ document: SourceDocument; mapping: SourceMapping | null } | null>(null)
   const [previewing, setPreviewing] = useState<SourceDocument | null>(null)
   const [showSchema, setShowSchema] = useState(false)
@@ -316,6 +319,25 @@ export function BuildConfigPanel({
           )}
         </section>
 
+        <section className="grid gap-3 sm:grid-cols-2" aria-label="Models and targets">
+          <FormField label="LLM model" htmlFor="kg-llm" hint="Used for document sources; recorded with the build.">
+            <LlmConfigSelect
+              id="kg-llm"
+              value={settings.llm_config_id}
+              projectDefault={defaults.data?.effective_llm}
+              onChange={(v) => setSettings((s) => ({ ...s, llm_config_id: v }))}
+            />
+          </FormField>
+          <FormField label="Graph database" htmlFor="kg-graph" hint="Deployment target; recorded with the build.">
+            <GraphTargetSelect
+              id="kg-graph"
+              value={settings.graph_connection_id}
+              projectDefault={defaults.data?.effective_graph}
+              onChange={(v) => setSettings((s) => ({ ...s, graph_connection_id: v }))}
+            />
+          </FormField>
+        </section>
+
         <section className="space-y-2" aria-label="Validation settings">
           <FormField
             label="Validation policy"
@@ -387,10 +409,10 @@ export function BuildConfigPanel({
             {llm.data?.configured ? (
               <span>
                 LLM: <strong>{llm.data.model}</strong> via {llm.data.provider}
-                {llm.data.endpoint_host ? ` (${llm.data.endpoint_host})` : ''} - from the server configuration
+                {llm.data.endpoint_host ? ` (${llm.data.endpoint_host})` : ''} - {llm.data.config_name ?? 'server configuration'}
               </span>
             ) : (
-              <span className="text-amber-700">No LLM configured - only structured sources can be built.</span>
+              <span className="text-amber-700">No LLM available for this build - only structured sources can be built.</span>
             )}
           </div>
         </section>

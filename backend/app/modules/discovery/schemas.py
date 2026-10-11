@@ -13,6 +13,9 @@ class DiscoveryRunCreate(BaseModel):
     )
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] = ""
     requested_by: Annotated[str, StringConstraints(strip_whitespace=True, max_length=200)] = ""
+    llm_config_id: str | None = Field(
+        default=None, description="Registered LLM configuration (Settings); None = the project's default"
+    )
 
 
 class RunDocument(BaseModel):

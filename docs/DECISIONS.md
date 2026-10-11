@@ -490,3 +490,24 @@ labels them "not run".
 (and later in RDF graph targets). The data namespace is the project's `data_namespace` or, by
 default, `{ontology IRI}/data/`; it is frozen in the build configuration at start.
 
+## ADR-045 Settings is a fourth navigation section; configurations are global, defaults per project
+**Status:** Accepted (Phase 4; user requirement)
+
+**Decision.** LLM configurations and graph database connections are registered once and shared by
+all projects; each project chooses defaults, and discovery runs and KG builds may override them.
+The previous three-section navigation is extended by exactly one section, *Settings*. The
+environment-configured LLM, the local SQL graph and the embedded Oxigraph store are virtual
+built-ins, so existing installations keep working without configuration (existing projects get
+NULL defaults, i.e. the built-ins).
+
+## ADR-046 Secrets are referenced by environment variable; tests are real and read-only
+**Status:** Accepted (Phase 4)
+
+**Decision.** The database stores only the *name* of the environment variable that holds an API key
+or password; values are read when a connection is opened and are never returned by the API.
+Connection tests perform real, side-effect-free calls (`/models`, `SELECT count(*)`, opening the
+embedded store, SPARQL `ASK`). Graph database kinds without a verified adapter (Neo4j, Cosmos DB
+Gremlin) are listed as unavailable with the reason and cannot be registered; no integration is
+simulated. Configuration changes are written to the server log and recorded on the record
+(`updated_by`, `updated_at`); project default changes are project activity events.
+

@@ -9,6 +9,17 @@ from app.modules.projects.repository import ProjectRepository
 from app.modules.projects.schemas import ProjectCreate, ProjectRead, ProjectUpdate
 
 
+def _require_registered(session: Session, llm_config_id: str | None, graph_connection_id: str | None) -> None:
+    from app.modules.settings.models import GraphConnection, LlmConfiguration
+
+    if llm_config_id not in (None, "env-default") and session.get(LlmConfiguration, llm_config_id) is None:
+        raise NotFoundError(f"LLM configuration '{llm_config_id}' was not found.", code="LLM_CONFIG_NOT_FOUND")
+    if graph_connection_id not in (None, "local-sql", "oxigraph-embedded") and session.get(
+        GraphConnection, graph_connection_id
+    ) is None:
+        raise NotFoundError(f"Graph connection '{graph_connection_id}' was not found.", code="GRAPH_CONNECTION_NOT_FOUND")
+
+
 class ProjectService:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -24,6 +35,9 @@ class ProjectService:
             description=project.description,
             business_domain=project.business_domain,
             ontology_count=ontology_count,
+            default_llm_config_id=project.default_llm_config_id or "env-default",
+            default_graph_connection_id=project.default_graph_connection_id or "local-sql",
+            data_namespace=project.data_namespace,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
@@ -46,8 +60,17 @@ class ProjectService:
             raise ConflictError(
                 f"A project named '{data.name}' already exists.", code="PROJECT_NAME_TAKEN"
             )
+        _require_registered(self.session, data.default_llm_config_id, data.default_graph_connection_id)
         project = self.projects.add(
-            Project(name=data.name, description=data.description, business_domain=data.business_domain)
+            Project(
+                name=data.name,
+                description=data.description,
+                business_domain=data.business_domain,
+                default_llm_config_id=None if data.default_llm_config_id in (None, "env-default") else data.default_llm_config_id,
+                default_graph_connection_id=None
+                if data.default_graph_connection_id in (None, "local-sql")
+                else data.default_graph_connection_id,
+            )
         )
         record_activity(
             self.session,

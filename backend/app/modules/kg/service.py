@@ -505,7 +505,8 @@ class KgService:
         if has_text and provider is None:
             error(
                 LLMNotConfiguredError.code,
-                "Document sources need the LLM provider, but none is configured (OLS_LLM_BASE_URL, OLS_LLM_MODEL).",
+                "Document sources need an LLM, but none is available for this build. Select a registered LLM "
+                "configuration (Settings) or configure the environment default (OLS_LLM_BASE_URL, OLS_LLM_MODEL).",
             )
         return BuildReadiness(ready=not any(i.severity == "error" for i in issues), issues=issues)
 
@@ -619,7 +620,9 @@ class KgService:
         snapshot = OntologySnapshot.model_validate(version.snapshot)
         return f"{ontology_iri_of(snapshot)}/data/"
 
-    def start_build(self, build_id: str, requested_by: str, provider: LLMProvider | None) -> KgBuild:
+    def start_build(
+        self, build_id: str, requested_by: str, provider: LLMProvider | None, selection: dict[str, Any] | None = None
+    ) -> KgBuild:
         build = self.require_build(build_id)
         if build.status != "configured":
             raise ConflictError(f"Build #{build.number} has already been started.", code="KG_BUILD_ALREADY_STARTED")
@@ -670,6 +673,8 @@ class KgService:
             ],
             "settings": dict(build.settings or {}),
             "validation_policy": get_policy((build.settings or {}).get("validation_policy")).config(),
+            # Effective LLM configuration and graph target (Settings), frozen at start.
+            **(selection or {}),
             "data_namespace": self._data_namespace(build.project_id, version),
             "llm": {"provider": provider.name, "model": provider.model, "prompt_version": PROMPT_VERSION}
             if has_text and provider

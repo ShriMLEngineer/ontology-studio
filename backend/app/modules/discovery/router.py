@@ -6,8 +6,11 @@ from sqlalchemy.orm import Session
 from app.db.session import get_session
 from app.modules.discovery.schemas import DiscoveryRunCreate, DiscoveryRunRead
 from app.modules.discovery.service import DiscoveryService, execute_discovery_run
-from app.modules.llm.provider import LLMProvider
-from app.modules.llm.service import require_llm_provider
+from app.core.errors import UnavailableError
+from app.modules.llm.provider import LLMNotConfiguredError
+from app.modules.ontology.service import OntologyService
+from app.modules.settings.router import get_settings_service
+from app.modules.settings.service import SettingsService
 
 router = APIRouter(tags=["discovery"])
 
@@ -30,9 +33,19 @@ def start_discovery(
     request: Request,
     background: BackgroundTasks,
     service: Service,
-    provider: Annotated[LLMProvider, Depends(require_llm_provider)],
+    settings_service: Annotated[SettingsService, Depends(get_settings_service)],
 ) -> DiscoveryRunRead:
-    """Queue an AI discovery run. Poll the run until it is ``completed`` or ``failed``."""
+    """Queue an AI discovery run with the selected (or the project's default) LLM configuration.
+    Poll the run until it is ``completed`` or ``failed``."""
+    settings_service.require_llm_id(data.llm_config_id)
+    ontology = OntologyService(settings_service.session)._require(ontology_id)
+    provider = settings_service.provider_for(settings_service.effective_llm_id(ontology.project_id, data.llm_config_id))
+    if provider is None:
+        raise UnavailableError(
+            "No LLM is available: register an LLM configuration in Settings or configure the environment default "
+            "(OLS_LLM_BASE_URL, OLS_LLM_MODEL).",
+            code=LLMNotConfiguredError.code,
+        )
     run = service.create_run(ontology_id, data, provider)
     background.add_task(
         execute_discovery_run, request.app.state.session_factory, provider, request.app.state.settings, run.id

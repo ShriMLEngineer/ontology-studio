@@ -47,8 +47,12 @@ export function useSources(projectId: string) {
   return useQuery({ queryKey: queryKeys.sources(projectId), queryFn: () => sourcesApi.list(projectId), enabled: Boolean(projectId) })
 }
 
-export function useLlmStatus() {
-  return useQuery({ queryKey: queryKeys.llmStatus, queryFn: () => systemApi.llmStatus(false), staleTime: 60_000 })
+export function useLlmStatus(projectId?: string, configId: string | null = null) {
+  return useQuery({
+    queryKey: projectId ? queryKeys.llmStatusFor(projectId, configId) : queryKeys.llmStatus,
+    queryFn: () => systemApi.llmStatus(false, projectId ? { projectId, configId } : {}),
+    staleTime: 60_000,
+  })
 }
 
 export function isTabular(mediaType: string): boolean {

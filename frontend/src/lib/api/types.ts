@@ -43,6 +43,9 @@ export interface Project {
   description: string
   business_domain: string
   ontology_count: number
+  default_llm_config_id: string
+  default_graph_connection_id: string
+  data_namespace: string | null
   created_at: string
   updated_at: string
 }
@@ -69,6 +72,8 @@ export interface ProjectCreate {
   description?: string
   business_domain?: string
   initial_ontology?: OntologyMetadata | null
+  default_llm_config_id?: string | null
+  default_graph_connection_id?: string | null
 }
 
 export interface OntologyStats {
@@ -283,6 +288,7 @@ export interface ActivityEvent {
 
 export interface LLMStatus {
   configured: boolean
+  config_name?: string | null
   provider: string | null
   model: string | null
   endpoint_host: string | null
@@ -352,6 +358,7 @@ export interface DiscoveryRunCreate {
   baseline_version_id?: string | null
   instructions?: string
   requested_by?: string
+  llm_config_id?: string | null
 }
 
 // ----------------------------------------------------------------------------- Phase 2: governance
@@ -678,6 +685,9 @@ export interface BuildSettings {
   instructions: string
   /** Validation policy id (Phase 4); builds before Phase 4 report the default. */
   validation_policy?: string
+  /** Registered configurations (Settings); null = the project's default. */
+  llm_config_id?: string | null
+  graph_connection_id?: string | null
 }
 
 export interface ValidationPolicy {
@@ -1198,4 +1208,110 @@ export interface ShaclValidationReport {
   duration_ms: number
   by_severity: Record<string, number>
   results: ShaclResultRead[]
+}
+
+// ------------------------------------------------------------------ Settings (Phase 4)
+
+export const ENV_DEFAULT_LLM = 'env-default'
+export const LOCAL_SQL_GRAPH = 'local-sql'
+
+export interface ConnectionTest {
+  ok: boolean
+  message: string
+  latency_ms: number
+  tested_at: string | null
+  details: Record<string, unknown>
+}
+
+export interface LlmConfig {
+  id: string
+  name: string
+  builtin: boolean
+  provider: string
+  base_url: string | null
+  model: string | null
+  api_key_env: string | null
+  api_key_present: boolean | null
+  structured_output: string
+  temperature: number
+  timeout_seconds: number
+  max_output_tokens: number
+  description: string
+  configured: boolean
+  last_test: ConnectionTest | null
+  used_by_projects: string[]
+  updated_by: string
+  updated_at: string | null
+}
+
+export interface LlmConfigInput {
+  name: string
+  base_url: string
+  model: string
+  api_key_env?: string | null
+  structured_output: 'json_schema' | 'json_object' | 'prompt'
+  temperature: number
+  timeout_seconds: number
+  max_output_tokens: number
+  description: string
+}
+
+export interface GraphKindField {
+  key: string
+  label: string
+  required: boolean
+  secret: boolean
+  placeholder: string
+}
+
+export interface GraphKind {
+  id: string
+  label: string
+  model: 'rdf' | 'property-graph'
+  builtin: boolean
+  registrable: boolean
+  available: boolean
+  description: string
+  unavailable_reason: string
+  fields: GraphKindField[]
+}
+
+export interface GraphConnection {
+  id: string
+  name: string
+  builtin: boolean
+  kind: string
+  kind_label: string
+  model: 'rdf' | 'property-graph'
+  config: Record<string, string>
+  secret_env: string | null
+  secret_present: boolean | null
+  description: string
+  last_test: ConnectionTest | null
+  used_by_projects: string[]
+  updated_by: string
+  updated_at: string | null
+}
+
+export interface GraphConnectionInput {
+  name: string
+  kind: string
+  config: Record<string, string>
+  secret_env?: string | null
+  description: string
+}
+
+export interface ProjectDefaults {
+  project_id: string
+  default_llm_config_id: string
+  default_graph_connection_id: string
+  data_namespace: string | null
+  effective_llm: LlmConfig
+  effective_graph: GraphConnection
+}
+
+export interface ProjectDefaultsUpdate {
+  default_llm_config_id?: string | null
+  default_graph_connection_id?: string | null
+  data_namespace?: string | null
 }

@@ -17,6 +17,11 @@ export const queryClient = new QueryClient({
 export const queryKeys = {
   health: ['health'] as const,
   llmStatus: ['llm-status'] as const,
+  llmStatusFor: (projectId: string, configId: string | null) => ['llm-status', projectId, configId ?? 'default'] as const,
+  llmConfigs: ['settings', 'llm'] as const,
+  graphConnections: ['settings', 'graph'] as const,
+  graphKinds: ['settings', 'graph-kinds'] as const,
+  projectDefaults: (projectId: string) => ['projects', projectId, 'defaults'] as const,
   projects: ['projects'] as const,
   ontologies: (projectId: string) => ['projects', projectId, 'ontologies'] as const,
   activity: (projectId: string) => ['projects', projectId, 'activity'] as const,

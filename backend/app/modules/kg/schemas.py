@@ -132,6 +132,8 @@ class BuildSettings(BaseModel):
     extract_attributes: bool = Field(default=True, description="Also extract attribute values from documents")
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
     validation_policy: str = Field(default=DEFAULT_POLICY_ID, description="Validation policy id (key/version)")
+    llm_config_id: str | None = Field(default=None, description="Registered LLM configuration; None = project default")
+    graph_connection_id: str | None = Field(default=None, description="Graph target; None = project default")
 
     @field_validator("validation_policy")
     @classmethod

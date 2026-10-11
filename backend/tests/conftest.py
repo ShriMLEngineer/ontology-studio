@@ -17,6 +17,7 @@ def make_settings(db_path: Path, *, seed: bool = False, **overrides: Any) -> Set
         "cors_origins": [],
         "log_level": "WARNING",
         "artifact_dir": db_path.parent / "artifacts",
+        "oxigraph_dir": db_path.parent / "oxigraph",
         # Never let a developer's .env point tests at a real LLM.
         "llm_base_url": None,
         "llm_model": None,

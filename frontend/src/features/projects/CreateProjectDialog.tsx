@@ -21,6 +21,7 @@ import { errorMessage } from '@/lib/api/client'
 import { projectsApi } from '@/lib/api/endpoints'
 import { slugify } from '@/lib/naming'
 import { queryKeys } from '@/lib/query'
+import { GraphTargetSelect, LlmConfigSelect } from '@/features/settings/selectors'
 
 interface FormState {
   name: string
@@ -29,9 +30,20 @@ interface FormState {
   ontologyName: string
   namespace: string
   prefix: string
+  llmConfigId: string
+  graphConnectionId: string
 }
 
-const EMPTY: FormState = { name: '', businessDomain: '', description: '', ontologyName: '', namespace: '', prefix: '' }
+const EMPTY: FormState = {
+  name: '',
+  businessDomain: '',
+  description: '',
+  ontologyName: '',
+  namespace: '',
+  prefix: '',
+  llmConfigId: 'env-default',
+  graphConnectionId: 'local-sql',
+}
 
 function derivePrefix(name: string): string {
   const initials = name
@@ -67,6 +79,8 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
           prefix: form.prefix,
           description: '',
         },
+        default_llm_config_id: form.llmConfigId,
+        default_graph_connection_id: form.graphConnectionId,
       }),
     onSuccess: async (project) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
@@ -177,6 +191,30 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/30 p-4">
+            <p className="col-span-2 text-sm font-medium">
+              Defaults <span className="text-xs font-normal text-muted-foreground">(registered in Settings; changeable later)</span>
+            </p>
+            <div className="grid gap-1.5">
+              <Label htmlFor="project-llm">LLM model</Label>
+              <LlmConfigSelect
+                id="project-llm"
+                allowProjectDefault={false}
+                value={form.llmConfigId}
+                onChange={(v) => update({ llmConfigId: v ?? 'env-default' })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="project-graph">Graph database</Label>
+              <GraphTargetSelect
+                id="project-graph"
+                allowProjectDefault={false}
+                value={form.graphConnectionId}
+                onChange={(v) => update({ graphConnectionId: v ?? 'local-sql' })}
+              />
             </div>
           </div>
 

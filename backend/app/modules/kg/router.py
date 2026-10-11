@@ -1,14 +1,17 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.core.errors import NotFoundError
 from app.db.session import get_session
 from app.modules.kg.feedback import KgFeedbackService
+from app.modules.kg.models import KgBuild
 from app.modules.kg.orchestrator import execute_kg_build
 from app.modules.kg.policy import DEFAULT_POLICY_ID, POLICIES
 from app.modules.kg.queries import KgQueryService
 from app.modules.kg.schemas import (
+    BuildSettings,
     ValidationPolicyRead,
     BuildComparison,
     BuildCreate,
@@ -41,6 +44,8 @@ from app.modules.kg.schemas import (
 from app.modules.kg.service import KgService
 from app.modules.llm.provider import LLMProvider
 from app.modules.llm.service import get_llm_provider
+from app.modules.settings.router import get_settings_service
+from app.modules.settings.service import SettingsService
 
 router = APIRouter(tags=["knowledge-graph"])
 
@@ -56,6 +61,43 @@ def get_query_service(request: Request, session: Annotated[Session, Depends(get_
 Service = Annotated[KgService, Depends(get_kg_service)]
 Queries = Annotated[KgQueryService, Depends(get_query_service)]
 Provider = Annotated[LLMProvider | None, Depends(get_llm_provider)]
+
+
+class BuildResources:
+    """Resolves the LLM and graph target of a build: build setting -> project default -> built-in."""
+
+    def __init__(self, settings_service: SettingsService) -> None:
+        self.settings = settings_service
+
+    def validate(self, settings: BuildSettings | None) -> None:
+        if settings is not None:
+            self.settings.require_llm_id(settings.llm_config_id)
+            self.settings.require_graph_id(settings.graph_connection_id)
+
+    def provider(self, build: KgBuild) -> LLMProvider | None:
+        config_id = self.settings.effective_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
+        try:
+            return self.settings.provider_for(config_id)
+        except NotFoundError:
+            return None  # deleted configuration: readiness reports that no LLM is available
+
+    def selection(self, build: KgBuild) -> dict[str, Any]:
+        llm_id = self.settings.effective_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
+        graph_id = self.settings.effective_graph_id(build.project_id, (build.settings or {}).get("graph_connection_id"))
+        graph = self.settings.get_graph(graph_id)
+        return {
+            "llm_config_id": llm_id,
+            "graph_target": {"id": graph.id, "name": graph.name, "kind": graph.kind, "model": graph.model, "config": graph.config},
+        }
+
+
+def get_build_resources(
+    request: Request, session: Annotated[Session, Depends(get_session)]
+) -> BuildResources:
+    return BuildResources(get_settings_service(request, session))
+
+
+Resources = Annotated[BuildResources, Depends(get_build_resources)]
 
 
 def _schedule(request: Request, background: BackgroundTasks, provider: LLMProvider | None, build_id: str) -> None:
@@ -143,24 +185,29 @@ def create_build(
     request: Request,
     background: BackgroundTasks,
     service: Service,
-    provider: Provider,
+    resources: Resources,
 ) -> BuildDetail:
     """Save a build configuration; with ``start`` it is also queued for execution."""
-    build = service.create_build(project_id, data, provider)
+    resources.validate(data.settings)
+    build = service.create_build(project_id, data, None)
+    provider = resources.provider(build)
     if data.start:
-        build = service.start_build(build.id, data.requested_by, provider)
+        build = service.start_build(build.id, data.requested_by, provider, resources.selection(build))
         _schedule(request, background, provider, build.id)
     return service.detail(build, provider)
 
 
 @router.get("/kg/builds/{build_id}", response_model=BuildDetail)
-def get_build(build_id: str, service: Service, provider: Provider) -> BuildDetail:
-    return service.get_build(build_id, provider)
+def get_build(build_id: str, service: Service, resources: Resources) -> BuildDetail:
+    build = service.require_build(build_id)
+    return service.detail(build, resources.provider(build))
 
 
 @router.patch("/kg/builds/{build_id}", response_model=BuildDetail)
-def update_build(build_id: str, data: BuildUpdate, service: Service, provider: Provider) -> BuildDetail:
-    return service.detail(service.update_build(build_id, data), provider)
+def update_build(build_id: str, data: BuildUpdate, service: Service, resources: Resources) -> BuildDetail:
+    resources.validate(data.settings)
+    build = service.update_build(build_id, data)
+    return service.detail(build, resources.provider(build))
 
 
 @router.delete("/kg/builds/{build_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -171,10 +218,12 @@ def delete_build(build_id: str, service: Service) -> Response:
 
 @router.post("/kg/builds/{build_id}/start", response_model=BuildDetail, status_code=status.HTTP_202_ACCEPTED)
 def start_build(
-    build_id: str, data: BuildStart, request: Request, background: BackgroundTasks, service: Service, provider: Provider
+    build_id: str, data: BuildStart, request: Request, background: BackgroundTasks, service: Service, resources: Resources
 ) -> BuildDetail:
     """Queue a configured build. Poll the build until it is ``completed`` or ``failed``."""
-    build = service.start_build(build_id, data.requested_by, provider)
+    build = service.require_build(build_id)
+    provider = resources.provider(build)
+    build = service.start_build(build_id, data.requested_by, provider, resources.selection(build))
     _schedule(request, background, provider, build.id)
     return service.detail(build, provider)
 
@@ -186,12 +235,13 @@ def rebuild(
     request: Request,
     background: BackgroundTasks,
     service: Service,
-    provider: Provider,
+    resources: Resources,
 ) -> BuildDetail:
     """Create a new build from an earlier one with another published version. The earlier build is untouched."""
     build = service.rebuild(build_id, data)
+    provider = resources.provider(build)
     if data.start:
-        build = service.start_build(build.id, data.requested_by, provider)
+        build = service.start_build(build.id, data.requested_by, provider, resources.selection(build))
         _schedule(request, background, provider, build.id)
     return service.detail(build, provider)
 

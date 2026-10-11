@@ -26,6 +26,7 @@ from app.modules.ontology.models import (
 )
 from app.modules.projects.models import Project
 from app.modules.registry.models import OntologyVersion
+from app.modules.settings.models import GraphConnection, LlmConfiguration
 from app.modules.sources.models import SourceChunk, SourceDocument
 from app.modules.validation.models import ValidationRun
 
@@ -35,6 +36,7 @@ __all__ = [
     "ChangeProposal",
     "DatatypePropertyRecord",
     "DiscoveryRun",
+    "GraphConnection",
     "GraphEdgeRecord",
     "GraphVertexRecord",
     "KgBuild",
@@ -44,6 +46,7 @@ __all__ = [
     "KgEntityMention",
     "KgOntologyGap",
     "KgSourceMapping",
+    "LlmConfiguration",
     "ObjectPropertyRecord",
     "Ontology",
     "OntologyClassRecord",

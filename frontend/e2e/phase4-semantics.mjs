@@ -5,6 +5,9 @@
  *      axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
  * 4.2  SHACL Shapes tab -> authored shape -> sample-data validation -> shapes.ttl in the package ->
  *      KG build under a SHACL validation policy -> per-fact SHACL lane in Fact Validation.
+ * Settings: fourth navigation section -> register and really test an LLM (local Ollama by default,
+ *      E2E_LLM_BASE_URL / E2E_LLM_MODEL) -> built-in Oxigraph -> unreachable SPARQL endpoint reported ->
+ *      project default resolved by discovery.
  *
  *   npm run e2e:semantic
  *
@@ -283,6 +286,65 @@ d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
     const legalName = page.getByTestId('fact-row').filter({ hasText: 'legal name' }).first()
     await legalName.waitFor()
     expect((await legalName.getByTestId('shacl-badge').textContent()) === 'Violation', 'authored shape rejected legal names')
+  })
+
+  // ------------------------------------------------------------------ Settings section
+
+  await step('Settings is the fourth primary section', async () => {
+    await page.goto(`${BASE_URL}/projects/${project.id}/settings`)
+    await page.getByTestId('settings-page').waitFor()
+    const items = await page.getByRole('navigation', { name: 'Primary' }).getByRole('link').allTextContents()
+    expect(
+      JSON.stringify(items) === JSON.stringify(['Project Workspace', 'Ontology Studio', 'Knowledge Graph Studio', 'Settings']),
+      `navigation: ${items.join(' | ')}`,
+    )
+  })
+
+  await step('Register an LLM model and test it against the real endpoint', async () => {
+    await page.getByRole('button', { name: 'Register LLM' }).click()
+    const dialog = page.getByTestId('llm-dialog')
+    await dialog.getByLabel('Name', { exact: true }).fill('Local Ollama (registered)')
+    await dialog.getByLabel('Base URL').fill(process.env.E2E_LLM_BASE_URL ?? 'http://localhost:11434/v1')
+    await dialog.getByLabel('Model').fill(process.env.E2E_LLM_MODEL ?? 'qwen2.5:7b')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    const row = page.getByTestId('llm-row').filter({ hasText: 'Local Ollama (registered)' })
+    await row.waitFor()
+    await row.getByRole('button', { name: 'Test' }).click()
+    const result = row.getByTestId('connection-test')
+    await result.waitFor({ timeout: 30_000 })
+    expect((await result.getAttribute('data-ok')) === 'true', `real connection test: ${await result.textContent()}`)
+  })
+
+  await step('Graph databases: built-in Oxigraph tested, unavailable kinds explained, failures reported honestly', async () => {
+    const oxigraph = page.getByTestId('graph-row').filter({ hasText: 'Embedded Oxigraph' })
+    await oxigraph.getByRole('button', { name: 'Test' }).click()
+    await oxigraph.locator('[data-testid="connection-test"][data-ok="true"]').waitFor()
+    expect((await page.getByTestId('unavailable-kinds').textContent()).includes('Neo4j'), 'Neo4j listed as not available')
+    await page.getByRole('button', { name: 'Register database' }).click()
+    const dialog = page.getByTestId('graph-dialog')
+    await dialog.getByLabel('Name', { exact: true }).fill('Unreachable SPARQL endpoint')
+    await dialog.getByLabel('Query endpoint URL').fill('http://127.0.0.1:9/sparql')
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    const row = page.getByTestId('graph-row').filter({ hasText: 'Unreachable SPARQL endpoint' })
+    await row.getByRole('button', { name: 'Test' }).click()
+    const result = row.locator('[data-testid="connection-test"][data-ok="false"]')
+    await result.waitFor({ timeout: 30_000 })
+    expect((await result.textContent()).includes('unreachable'), 'connection failure is reported, not simulated')
+    await shot('07-settings')
+  })
+
+  await step('Project defaults use the registered LLM; discovery and KG builds resolve it', async () => {
+    const llmOption = await page.locator('#default-llm option', { hasText: 'Local Ollama (registered)' }).getAttribute('value')
+    await page.locator('#default-llm').selectOption(llmOption)
+    await page.getByRole('button', { name: 'Save defaults' }).click()
+    await page.getByText('Project defaults saved').waitFor()
+    await page.goto(`${BASE_URL}/projects/${project.id}/ontology?tab=discovery`)
+    const select = page.getByLabel('LLM configuration')
+    await select.locator('option').first().waitFor({ state: 'attached' })
+    expect((await select.locator('option').first().textContent()).includes('Local Ollama (registered)'), 'project default shown')
+    await page.getByText('Endpoint reachable').first().waitFor({ timeout: 30_000 })
+    const status = (await api('GET', `/llm/status?project_id=${project.id}`)).body
+    expect(status.config_name === 'Local Ollama (registered)', `effective configuration: ${status.config_name}`)
   })
 
   const unexpected = consoleErrors.filter((e) => !e.includes('Download the React DevTools'))
