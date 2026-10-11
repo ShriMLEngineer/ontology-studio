@@ -1,0 +1,31 @@
+[project]
+name = "ontology-lifecycle-studio-backend"
+version = "0.1.0"
+description = "Ontology Lifecycle Studio - FastAPI modular monolith (Phase 1)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143,<0.200",
+    "uvicorn[standard]>=0.54",
+    "pydantic>=2.14,<3",
+    "pydantic-settings>=2.15,<3",
+    "sqlalchemy>=2.1,<2.2",
+    "alembic>=1.20,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1",
+    "httpx2>=2.13",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:app.*"]

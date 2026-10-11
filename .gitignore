@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local data, artifacts and secrets
+backend/data/
+.env
+.env.*
+!.env.example
+
+# Node / frontend build output
+node_modules/
+frontend/dist/
+frontend/e2e/artifacts/
+*.tsbuildinfo
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
