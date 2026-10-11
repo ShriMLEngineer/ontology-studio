@@ -26,6 +26,7 @@ import {
   classDependents,
   descendantIds,
   findLocalNameOwner,
+  iriHint,
   type DraftAction,
   type DraftDoc,
   type ElementSelection,
@@ -87,7 +88,7 @@ export function AttributeEditor({
           </Select>
         </Field>
       </div>
-      <Field id={fid('local')} label="Local name (IRI)" warning={localNameWarning(doc, attr.local_name, attr.id)}>
+      <Field id={fid('local')} label="Local name (IRI)" hint={iriHint(doc, attr)} warning={localNameWarning(doc, attr.local_name, attr.id)}>
         <Input
           id={fid('local')}
           className="font-mono"
@@ -188,7 +189,7 @@ export function ClassInspector({
         <Field
           id="class-local-name"
           label="Local name (IRI)"
-          hint={`${doc.metadata.namespace}${cls.local_name}`}
+          hint={iriHint(doc, cls)}
           warning={localNameWarning(doc, cls.local_name, cls.id)}
         >
           <Input

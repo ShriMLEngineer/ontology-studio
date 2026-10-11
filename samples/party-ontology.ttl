@@ -1,0 +1,77 @@
+@prefix ex: <https://example.org/party#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+
+# Sample OWL ontology for the RDF import (Ontology Studio > RDF / OWL).
+# It mixes constructs of the OLS Semantic Profile with constructs that the typed model does not
+# represent (union class expression, individuals, custom annotation property, SHACL shape, extra
+# language labels). The import report shows which triples were modelled and which were preserved.
+
+<https://example.org/party> a owl:Ontology ;
+    rdfs:label "Party Model" ;
+    owl:versionInfo "0.3" ;
+    owl:imports <http://xmlns.com/foaf/0.1/> ;
+    rdfs:comment "Sample ontology used to demonstrate lossless RDF import." .
+
+ex:Party a owl:Class ;
+    rdfs:label "Party"@en , "Partei"@de ;
+    skos:definition "A person or organisation that takes part in a business relationship."@en .
+
+ex:Person a owl:Class ;
+    rdfs:label "Person"@en ;
+    skos:definition "An individual human being."@en ;
+    rdfs:subClassOf ex:Party ,
+        [ a owl:Restriction ; owl:onProperty ex:worksFor ; owl:someValuesFrom ex:Organisation ] ;
+    owl:equivalentClass foaf:Person ;
+    owl:disjointWith ex:Organisation .
+
+ex:Organisation a owl:Class ;
+    rdfs:label "Organisation"@en ;
+    skos:definition "A legally recognised organisation."@en ;
+    rdfs:subClassOf ex:Party ,
+        [ a owl:Restriction ; owl:onProperty ex:employs ;
+          owl:minQualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onClass ex:Person ] .
+
+ex:KeyParty a owl:Class ;
+    rdfs:label "Key party"@en ;
+    skos:definition "A person or organisation of strategic importance."@en ;
+    owl:equivalentClass [ a owl:Class ; owl:unionOf ( ex:Person ex:Organisation ) ] .
+
+ex:worksFor a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "works for"@en ;
+    skos:definition "The organisation that employs the person."@en ;
+    rdfs:domain ex:Person ;
+    rdfs:range ex:Organisation ;
+    owl:inverseOf ex:employs .
+
+ex:employs a owl:ObjectProperty ;
+    rdfs:label "employs"@en ;
+    skos:definition "A person employed by the organisation."@en ;
+    rdfs:domain ex:Organisation ;
+    rdfs:range ex:Person .
+
+ex:legalName a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "legal name"@en ;
+    skos:definition "The registered legal name."@en ;
+    rdfs:domain ex:Party ;
+    rdfs:range xsd:string .
+
+ex:foundedIn a owl:DatatypeProperty ;
+    rdfs:label "founded in"@en ;
+    skos:definition "Year the organisation was founded."@en ;
+    rdfs:domain ex:Organisation ;
+    rdfs:range xsd:gYear .
+
+ex:steward a owl:AnnotationProperty .
+ex:Party ex:steward "Master data team" .
+
+ex:acme a owl:NamedIndividual , ex:Organisation ;
+    ex:legalName "ACME Corporation" .
+
+ex:PartyShape a sh:NodeShape ;
+    sh:targetClass ex:Party ;
+    sh:property [ sh:path ex:legalName ; sh:minCount 1 ] .

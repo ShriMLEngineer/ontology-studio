@@ -67,7 +67,11 @@ export function useDraftEditor(ontologyId: string | undefined) {
     (draft: OntologyDraft) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.ontologies(draft.ontology.project_id) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.activity(draft.ontology.project_id) })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.latestValidation(draft.ontology.id) })
+      // Everything derived from the draft (validation, preserved-axiom status, RDF export, publish
+      // preview, comparisons) - but not the draft query itself, which was just updated in place.
+      void queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'ontologies' && q.queryKey[1] === draft.ontology.id && q.queryKey[2] !== 'draft',
+      })
     },
     [queryClient],
   )

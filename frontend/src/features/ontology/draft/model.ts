@@ -185,3 +185,14 @@ export function classLabel(doc: DraftDoc, id: string | null | undefined): string
   if (!id) return '—'
   return doc.classes.find((c) => c.id === id)?.label ?? `Unknown (${id})`
 }
+
+/** Hint for the local-name field: the persisted IRI (published and imported IRIs do not follow renames). */
+export function iriHint(doc: DraftDoc, element: { local_name: string; iri?: string | null }): string {
+  const derived = `${doc.metadata.namespace}${element.local_name}`
+  if (!element.iri || element.iri === derived) return derived
+  return `IRI ${element.iri} (kept when published or imported; otherwise updated on save)`
+}
+
+export function defaultOntologyIri(namespace: string): string {
+  return namespace.replace(/[#/:]+$/, '') || namespace
+}

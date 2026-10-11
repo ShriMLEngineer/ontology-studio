@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { governanceApi, validationApi } from '@/lib/api/endpoints'
 import type { ValidationIssue } from '@/lib/api/types'
@@ -27,9 +28,10 @@ import { DiscoveryView } from './discovery/DiscoveryView'
 import { ReviewerControl } from './governance/ReviewerControl'
 import { RegistryView } from './registry/RegistryView'
 import { ReviewView } from './review/ReviewView'
+import { SemanticsView } from './semantics/SemanticsView'
 import { ValidationView } from './validation/ValidationView'
 
-const TABS = ['designer', 'discovery', 'review', 'validation', 'registry'] as const
+const TABS = ['designer', 'discovery', 'review', 'validation', 'semantics', 'registry'] as const
 type StudioTab = (typeof TABS)[number]
 type ElementKind = 'class' | 'object_property' | 'datatype_property'
 
@@ -65,6 +67,16 @@ export function OntologyStudioPage() {
         },
         { replace: true },
       ),
+    [setSearchParams],
+  )
+
+  const switchOntology = useCallback(
+    (ontologyId: string) =>
+      setSearchParams((prev) => {
+        const params = new URLSearchParams(prev)
+        params.set('ontology', ontologyId)
+        return params
+      }),
     [setSearchParams],
   )
 
@@ -128,6 +140,25 @@ export function OntologyStudioPage() {
       <div className="shrink-0 border-b bg-background px-6 pt-4">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-xl font-semibold tracking-tight">{editor.doc?.metadata.name ?? activeOntology.name}</h1>
+          {(ontologies.data?.length ?? 0) > 1 && (
+            <Select value={activeOntology.id} onValueChange={switchOntology} disabled={editor.dirty}>
+              <SelectTrigger
+                size="sm"
+                className="h-7 w-auto max-w-56 text-xs"
+                aria-label="Switch ontology"
+                title={editor.dirty ? 'Save or discard changes before switching ontology' : 'Switch ontology'}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ontologies.data?.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Badge variant="secondary">Draft · revision {editor.base?.draft_revision ?? activeOntology.draft_revision}</Badge>
           {editor.dirty && (
             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
@@ -163,6 +194,7 @@ export function OntologyStudioPage() {
               </span>
             )}
           </TabsTrigger>
+          <TabsTrigger value="semantics">RDF / OWL</TabsTrigger>
           <TabsTrigger value="registry">Registry</TabsTrigger>
         </TabsList>
       </div>
@@ -214,6 +246,9 @@ export function OntologyStudioPage() {
             onOpenInDesigner={(elementId, kind) => showElement(kind, elementId)}
           />
         )}
+      </TabsContent>
+      <TabsContent value="semantics" className="min-h-0 flex-1 overflow-y-auto">
+        {body ?? <SemanticsView projectId={projectId} ontologyId={activeOntology.id} editor={editor} />}
       </TabsContent>
       <TabsContent value="registry" className="min-h-0 flex-1 overflow-y-auto">
         {body ?? <RegistryView projectId={projectId} ontologyId={activeOntology.id} editor={editor} />}

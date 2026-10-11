@@ -45,4 +45,9 @@ export const queryKeys = {
   kgGaps: (buildId: string) => ['kg-builds', buildId, 'gaps'] as const,
   kgCompare: (base: string, target: string) => ['kg-compare', base, target] as const,
   sourcePreview: (documentId: string) => ['sources', documentId, 'preview'] as const,
+  draftRdf: (ontologyId: string, format: string, revision: number) =>
+    ['ontologies', ontologyId, 'rdf', format, revision] as const,
+  axioms: (ontologyId: string) => ['ontologies', ontologyId, 'axioms'] as const,
+  imports: (ontologyId: string) => ['ontologies', ontologyId, 'imports'] as const,
+  entailments: (ontologyId: string, revision: number) => ['ontologies', ontologyId, 'entailments', revision] as const,
 }

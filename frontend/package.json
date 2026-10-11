@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "e2e:journey": "node e2e/user-journey.mjs",
     "e2e:governance": "node e2e/phase2-governance.mjs",
-    "e2e:kg": "node e2e/phase3-knowledge-graph.mjs"
+    "e2e:kg": "node e2e/phase3-knowledge-graph.mjs",
+    "e2e:semantic": "node e2e/phase4-semantics.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

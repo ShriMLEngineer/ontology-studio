@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import type { DatatypePropertyDefinition, ObjectPropertyDefinition, ValidationIssue } from '@/lib/api/types'
 import { LOCAL_NAME_PATTERN } from '@/lib/naming'
-import { classLabel, findLocalNameOwner, type DraftAction, type DraftDoc, type ElementSelection } from '../draft/model'
+import { classLabel, findLocalNameOwner, iriHint, type DraftAction, type DraftDoc, type ElementSelection } from '../draft/model'
 import { AttributeEditor } from './ClassInspector'
 import { AliasEditor, ClassSelect, Field } from './fields'
 import { IssueList } from './IssueList'
@@ -92,7 +92,7 @@ export function RelationshipInspector({
         <Field id="rel-label" label="Label" warning={prop.label.trim() ? undefined : 'Label is required.'}>
           <Input id="rel-label" value={prop.label} onChange={(e) => update({ label: e.target.value })} />
         </Field>
-        <Field id="rel-local-name" label="Local name (IRI)" hint={`${doc.metadata.namespace}${prop.local_name}`} warning={nameWarning}>
+        <Field id="rel-local-name" label="Local name (IRI)" hint={iriHint(doc, prop)} warning={nameWarning}>
           <Input
             id="rel-local-name"
             className="font-mono"

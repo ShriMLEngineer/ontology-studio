@@ -384,3 +384,71 @@ next build.
 
 **Decision.** PDF text is chunked per page (`chunk_pages`), so each chunk - and every quote located
 in it - carries an exact page number for provenance. Text formats keep paragraph-aware chunking.
+
+## ADR-035 Hybrid semantic model: typed OLS Semantic Profile plus preserved axioms
+**Status:** Accepted (Phase 4, decision D1 of the Phase 4 proposal)
+
+**Decision.** The typed canonical model stays authoritative for the *OLS Semantic Profile*: named
+classes and properties with persisted IRIs, labels/definitions/aliases (optionally language
+tagged), `rdfs:subClassOf`, single domain and range, `rdfs:subPropertyOf`, `owl:inverseOf`,
+property characteristics, `owl:equivalentClass/Property`, `owl:disjointWith`, deprecation and the
+restrictions some/all/hasValue/min/max/exact (qualified or not). Everything else in an imported
+document is stored verbatim as an **extension axiom** (N-Triples with its blank-node closure,
+anchored to element ids, scope `ontology` or `shapes`) and re-exported unchanged. The importer
+interprets conservatively, re-serialises the typed model and reconciles by blank-node component; a
+final check verifies that the export contains every source triple except the documented
+*superseded* version-header triples (`owl:versionInfo`, `owl:versionIRI`, `dcterms:issued`), so
+an import can never silently drop semantics. Axioms whose anchors are deleted block publication
+(`EXTENSION_AXIOM_ORPHANED`) until an SME removes them (audited) or restores the element.
+
+## ADR-036 Required and single-value are data constraints, not OWL axioms
+**Status:** Accepted (Phase 4, D2)
+
+**Decision.** From snapshot format `ols.ontology-snapshot/2` the switches `required` and
+`multi_valued` no longer produce `owl:minCardinality 1` / `owl:FunctionalProperty`; they are data
+constraints validated with SHACL. OWL characteristics are emitted only when set explicitly
+(`semantics.functional`, object-property characteristics). The frozen Phase 1-3 serialiser
+(`registry/rdf.py`) is kept for legacy `/1` snapshots, and the first `/2` publication after a `/1`
+version carries a *semantic profile change* note with the number of axioms no longer asserted.
+
+## ADR-037 Persisted IRIs, locked after publication
+**Status:** Accepted (Phase 4, D3)
+
+**Decision.** Every element stores its IRI. New elements get `namespace + local_name`; unpublished,
+automatically managed IRIs follow renames and namespace changes; explicit (imported) IRIs are kept;
+IRIs of elements in the latest published version (legacy versions derive them) are locked
+(`IRI_LOCKED`). Migration `0004` backfills drafts with exactly the IRI the Phase 1-3 serialiser
+derived, so the first export after the upgrade denotes the same resources. A draft IRI that had
+already diverged from the last publication before the upgrade is kept (not rewritten) and shown in
+the publish diff. Clients that omit `iri`/`semantics` (Phase 1-3 payloads) keep the stored values.
+
+## ADR-038 Version packages are artifacts of the immutable version row
+**Status:** Accepted (Phase 4, D4; refines the proposal's separate package table)
+
+**Decision.** A `/2` publication writes, in the same transaction as the version row, write-once
+artifacts for the snapshot JSON, OWL in Turtle, RDF/XML, JSON-LD and N-Triples, and a manifest
+(`ols-semantic/2`: ontology/version IRI, prefixes, imports, content hash, artifact checksums,
+preserved-axiom count). Storing the package in the existing immutable `artifacts` map avoids a new
+table and keeps the four immutability layers unchanged. Legacy versions are reported as
+`ols-semantic/1 (legacy)`; other RDF syntaxes are derived from their stored Turtle on export, flagged
+with `X-Artifact-Derived: true` and never stored. SHACL shapes join the package in milestone 4.2.
+
+## ADR-039 Reasoning is a separate, informational preview
+**Status:** Accepted (Phase 4, D11)
+
+**Decision.** `owlrl` (OWL 2 RL forward chaining) runs on a copy of the draft's OWL graph and reports
+named-entity entailments and inconsistencies. Nothing is written back to the draft, a published
+version or a graph target, and reasoning results are reported separately from structural
+validation, SHACL validation and evidence validation.
+
+## ADR-040 RDF import creates a new ontology or fills an empty draft
+**Status:** Accepted (Phase 4, D10)
+
+**Decision.** Imports never merge into a populated draft: they create a new ontology (name suffixed
+when it collides) or fill an explicitly selected empty draft, whose namespace and prefix then come
+from the document. Every import is recorded with file name, format, SHA-256, actor and the full
+report (modelled, preserved, superseded and added triples, warnings). Properties without a single
+declared domain/range are kept open; the ontology then uses `require_domain_range = false`, which
+turns missing domain/range into warnings, and knowledge-graph checks treat an open signature as
+admitting any class.
+

@@ -58,13 +58,13 @@ flowchart LR
 │   │   │   └── seed/            Supply Chain demonstration data (+ sample source loader)
 │   │   ├── main.py              app factory, router composition, lifespan
 │   │   └── cli.py               `migrate` / `seed` / `seed-samples` commands
-│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers), 0003 (Phase 3)
+│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers), 0003 (Phase 3), 0004+ (Phase 4)
 │   └── tests/                   pytest unit + API tests (LLM via an explicit test double)
 ├── frontend/
-│   ├── src/features/ontology/   designer · discovery · review · validation · registry · governance
+│   ├── src/features/ontology/   designer · discovery · review · validation · semantics (RDF/OWL) · registry · governance
 │   ├── src/features/kg/         pipeline · explorer (Cytoscape) · facts · evaluation
-│   └── e2e/                     Phase 1 journey, Phase 2 governance and Phase 3 KG journeys (playwright-core)
-├── samples/                     discovery handbook; supply-chain/ CSVs + PDF for KG builds
+│   └── e2e/                     Phase 1 journey, Phase 2 governance, Phase 3 KG and Phase 4 semantic journeys (playwright-core)
+├── samples/                     discovery handbook; supply-chain/ CSVs + PDF for KG builds; party-ontology.ttl (RDF import)
 └── docs/
 ```
 
@@ -79,7 +79,8 @@ flowchart LR
 | 3 | Ontology discovery & alignment | `llm`, `discovery` | ✔ Phase 2 |
 | 4 | SME review & governance | `governance` | ✔ Phase 2 (+ KG-origin proposals) |
 | 5 | Ontology validation | `validation` | Structural rules ✔ (reused for impact and publication) |
-| 6 | Registry & publishing | `registry` | ✔ Phase 2 (snapshots are the KG schema authority) |
+| 6 | Registry & publishing | `registry` | ✔ Phase 2 (snapshots are the KG schema authority); Phase 4 `ols-semantic/2` packages |
+| 6b | Standards semantics (RDF/OWL import & export, preserved axioms, reasoning) | `semantics` | ✔ Phase 4.1 |
 | 7 | KG extraction | `kg.mapping`, `kg.extraction`, `kg.resolution` | ✔ Phase 3 |
 | 8 | Fact validation | `kg.validation` | ✔ Phase 3 (structural + evidence) |
 | 9 | Graph persistence & query | `graph`, `kg.queries` | ✔ Phase 3 (`SqlGraphStore`) |
@@ -96,9 +97,19 @@ critical logic so it can be unit-tested: `validate_schema`, `ground_quote`, `ali
 
 `modules/ontology/domain.py` defines `ClassDefinition`, `ObjectPropertyDefinition`,
 `DatatypePropertyDefinition` and `OntologySchema`. Elements have a stable `id` (used by all
-references, proposals and diffs) and an editable `local_name` that forms the IRI
-(`namespace + local_name`). The model is schema-only and independent of SQLAlchemy, React Flow,
-LLM output and graph databases.
+references, proposals and diffs), an editable `local_name` and, since Phase 4, a persisted `iri`
+(minted as `namespace + local_name`, locked once published - ADR-037). The model is schema-only and
+independent of SQLAlchemy, React Flow, LLM output and graph databases.
+
+Phase 4 makes the model the authoritative representation of the **OLS Semantic Profile**
+(ADR-035): each element carries a `semantics` object (`ClassSemantics` - equivalent and disjoint
+classes, restrictions; `ObjectPropertySemantics` - super-properties, inverse, characteristics;
+`DatatypePropertySemantics` - super-properties, explicit `functional`, whether the XSD range is
+declared; all with deprecation, annotation language and the description predicate). The schema
+carries the ontology header (`ontology_iri`, `prefixes`, `imports`, `require_domain_range`) and the
+list of preserved `extension_axioms`. `required` / `multi_valued` are data constraints (ADR-036).
+Supported XSD datatypes: string, integer, decimal, boolean, date, dateTime, anyURI, float, double,
+int, long, time, gYear.
 
 ### 4.3 Persistence model
 
@@ -117,6 +128,8 @@ erDiagram
   change_proposals ||--o{ proposal_evidence : "supported by"
   change_proposals ||--o{ proposal_events : "review trail"
   ontologies ||--o{ ontology_versions : "published as (RESTRICT)"
+  ontologies ||--o{ ontology_extension_axioms : "preserves"
+  ontologies ||--o{ ontology_imports : "imported from"
   ontology_versions ||--o{ kg_builds : "schema authority (RESTRICT)"
   source_documents ||--o{ kg_source_mappings : "mapped by"
   kg_builds ||--o{ kg_build_logs : "logs"
@@ -136,7 +149,10 @@ erDiagram
 | `change_proposals` | Type (ADD/REUSE/ALIAS/MODIFY/CONFLICT), status, target element, new element or field-level `{before, after}` changes, alignment notes, dependencies, the verbatim validated LLM finding, apply results. |
 | `proposal_evidence` | Verified quote, context, document name, page and offsets - stored denormalised so evidence survives document deletion. |
 | `proposal_events` | Append-only review timeline: created, commented, edited, approved, rejected, refinement requested, reopened, applied, apply failed (with actor and comment). |
-| `ontology_versions` | Immutable published snapshot, content hash, version, validation summary, change summary, artifact checksums, publisher and notes. |
+| `ontology_versions` | Immutable published snapshot, content hash, version, validation summary, change summary, artifact checksums, publisher and notes. Snapshot format `/1` (Phase 1-3, legacy) or `/2` (Phase 4: IRIs, semantics, header, preserved axioms). |
+| `ontology_classes` / `ontology_object_properties` / `ontology_datatype_properties` | Draft elements; Phase 4 adds `iri` and `semantics` (JSON, only non-default values stored). `ontologies` gains `ontology_iri`, `prefixes`, `imports`, `require_domain_range`. |
+| `ontology_extension_axioms` | Preserved triples outside the profile: scope (`ontology`/`shapes`), kind, summary, N-Triples, anchor element ids, originating import. Never touched by draft saves. |
+| `ontology_imports` | RDF import records: file name, format, SHA-256, actor and the full import report. |
 | `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
 | `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
 | `kg_build_logs` | Append-only execution log per build and stage. |
@@ -226,10 +242,35 @@ stateDiagram-v2
   marked read-only and verified against their checksum on every export.
 * **Compare** (`GET /ontologies/{id}/compare?base=&target=`): field-level diff between any two
   versions or a version and the draft.
-* **RDF**: RDFLib OWL export - `owl:Ontology` with `owl:versionInfo`/`owl:versionIRI`, classes,
-  object and datatype properties, `rdfs:subClassOf`, domain/range, XSD ranges, `skos:definition`,
-  `skos:altLabel`, `dcterms:identifier` (stable element id), `owl:FunctionalProperty` for
-  single-valued attributes and `owl:minCardinality 1` restrictions for required attributes.
+* **RDF (legacy, Phase 1-3)**: `registry/rdf.py` is frozen for `/1` snapshots - `owl:Ontology`
+  with `owl:versionInfo`/`owl:versionIRI`, classes, object and datatype properties,
+  `rdfs:subClassOf`, domain/range, XSD ranges, `skos:definition`, `skos:altLabel`,
+  `dcterms:identifier`, `owl:FunctionalProperty` for single-valued attributes and
+  `owl:minCardinality 1` for required attributes.
+* **RDF (Phase 4, `semantics/owl.py`)**: persisted IRIs, explicit ontology IRI, custom prefixes,
+  `owl:imports`, language-tagged annotations, `skos:definition` or `rdfs:comment`, sub-properties,
+  inverse, characteristics, equivalence, disjointness, restrictions, `owl:deprecated`, and the
+  preserved axioms merged back verbatim. No OWL axioms are derived from `required`/`multi_valued`.
+* **Packages** (ADR-038): `/2` publications store snapshot JSON, Turtle, RDF/XML, JSON-LD,
+  N-Triples and a manifest (`ols-semantic/2`). Legacy versions keep their stored bytes; other
+  syntaxes are derived from the stored Turtle on export (`X-Artifact-Derived: true`).
+* **Diff (Phase 4)**: IRIs are normalised (legacy snapshots derive them); an IRI change is
+  breaking, a local-name change with a locked IRI is a patch, semantics changes are minor,
+  preserved axioms added → minor / removed → major, and a `/1` → `/2` publication carries a
+  *semantic profile change* note.
+
+### 4.6b Standards semantics (Phase 4)
+
+| Component | Responsibility |
+|---|---|
+| `semantics/graphs.py` | RDF formats (Turtle, RDF/XML, JSON-LD, N-Triples), parsing, blank-node components, canonical N-Triples. |
+| `semantics/owl.py` | `/2` OWL serialiser (above). |
+| `semantics/rdf_import.py` | Conservative interpretation of profile patterns; reconciliation by blank-node component; preserved axioms (with kind, summary and anchors; SHACL → `shapes` scope); verified no-loss guarantee; import report. |
+| `semantics/reasoning.py` | `owlrl` OWL 2 RL entailment preview and inconsistency detection on a copy (ADR-039). |
+| `validation/rules.py` (extended) | `IRI_INVALID`, `DUPLICATE_IRI`, `ONTOLOGY_IRI_INVALID`, `IMPORT_IRI_INVALID`, `PREFIX_*`, `SEMANTIC_REFERENCE_INVALID`, `DISJOINT_WITH_RELATED_CLASS`, `CHARACTERISTICS_CONFLICT`, `EXTENSION_AXIOM_ORPHANED`; missing domain/range is an error only when `require_domain_range` is on. |
+
+Validation layers stay separate: **structural** rules (above), **OWL reasoning** (informational
+preview), **SHACL** (milestone 4.2) and **evidence** validation of KG facts (Phase 3).
 
 ### 4.7 Knowledge-graph engineering (Phase 3)
 
@@ -356,7 +397,8 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | Sources | `GET/POST(multipart) /projects/{id}/sources`, `GET/DELETE /sources/{id}`, `GET /sources/{id}/preview` |
 | Discovery | `POST/GET /ontologies/{id}/discovery-runs`, `GET /discovery-runs/{id}` |
 | Governance | `GET /ontologies/{id}/proposals?status=&type=&run_id=&origin=&kg_build_id=`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
-| Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|json`, `GET /ontologies/{id}/compare` |
+| Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|rdfxml\|jsonld\|ntriples\|json\|manifest`, `GET /ontologies/{id}/compare` |
+| Semantics (Phase 4) | `GET /ontologies/{id}/rdf?format=&download=`, `POST(multipart) /projects/{id}/ontologies/import`, `GET /ontologies/{id}/imports`, `GET /ontologies/{id}/axioms`, `DELETE /ontologies/{id}/axioms/{aid}?deleted_by=`, `GET /ontologies/{id}/entailments` |
 | KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
 | KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
 | Facts & entities | `GET /kg/builds/{id}/facts?status=&kind=&source_id=&predicate_id=&q=`, `GET /kg/facts/{id}`, `GET /kg/builds/{id}/entities?q=&method=`, `GET /kg/entities/{id}` |
@@ -384,7 +426,12 @@ Studio). Phase 2 functionality lives in **Ontology Studio** tabs:
 | AI Discovery | Provider status, source upload (drag & drop), run configuration (baseline draft or published version, SME focus), live run progress, results by type, discarded findings with reasons. |
 | SME Review | Queue with status/type/run filters and search; detail with validation impact, current vs proposed values, alignment notes (including where alignment overrode the model), rationale, verified evidence highlighted in context, editing, decisions with mandatory comments for reject/refine, review timeline, comments, and "Apply approved to draft". |
 | Validation | Structural validation of the saved draft (Phase 1). |
-| Registry | Publication preview (validation gate, changes since the last version, breaking changes, suggested version), publish with release notes, version history with checksum-verified Turtle/JSON downloads, version comparison. |
+| RDF / OWL (Phase 4) | OWL export preview of the saved draft in four syntaxes with downloads; RDF import into a new ontology with the import report (modelled, preserved, superseded, added triples, warnings) and import history; preserved axioms with kind, anchors, orphan status, N-Triples and audited removal; OWL 2 RL reasoning preview. |
+| Registry | Publication preview (validation gate, changes since the last version, breaking changes, semantic-profile notes, preserved-axiom changes, suggested version), publish with release notes, version history with package format and checksum-verified downloads (legacy versions offer derived RDF syntaxes), version comparison. |
+
+The Studio header offers an ontology switcher when a project has several ontologies (for example
+after an RDF import). The ontology inspector edits the semantic header (ontology IRI, imports,
+prefixes, domain/range policy); element inspectors show the persisted IRI.
 
 The reviewer identifies themselves once (stored locally); the name is recorded on decisions,
 comments, applications and publications. Applying and publishing are blocked while the designer

@@ -678,7 +678,13 @@ class _Importer:
         return "rdf-statement"
 
     def _summary(self, triples: list[Triple]) -> str:
-        manager = self.graph.namespace_manager
+        if not hasattr(self, "_display"):
+            self._display = Graph(bind_namespaces="none")
+            for prefix, namespace in (*STANDARD_PREFIXES, ("sh", SH)):
+                self._display.bind(prefix, namespace)
+            for prefix, namespace in self.graph.namespaces():
+                self._display.bind(prefix, namespace, override=False)
+        manager = self._display.namespace_manager
 
         def short(term: Any) -> str:
             if isinstance(term, BNode):
