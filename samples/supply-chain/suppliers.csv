@@ -1,0 +1,5 @@
+supplier_id,legal_name,alias,tier,risk_rating,country,certification
+S-001,Northwind Components Ltd,Northwind Components|Northwind,1,low,DE,ISO 9001
+S-002,Contoso Metals GmbH,Contoso Metals|Contoso,1,medium,AT,ISO 9001
+S-003,Fabrikam Plastics Inc,Fabrikam Plastics,2,medium,US,
+S-004,Contoso Packaging BV,Contoso Packaging|Contoso,2,low,NL,FSC

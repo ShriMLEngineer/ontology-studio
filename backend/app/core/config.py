@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     discovery_batch_chars: int = 6000
     discovery_max_chunks_per_run: int = 40
 
+    # Knowledge-graph builds.
+    kg_max_records_per_source: int = 10_000
+    kg_default_max_chunks: int = 20
+
 
 @lru_cache
 def get_settings() -> Settings:

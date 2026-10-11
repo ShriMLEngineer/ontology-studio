@@ -34,8 +34,17 @@ def list_proposals(
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     proposal_type: Annotated[str | None, Query(alias="type")] = None,
     run_id: str | None = None,
+    origin: str | None = None,
+    kg_build_id: str | None = None,
 ) -> list[ProposalSummary]:
-    return service.list_proposals(ontology_id, status=status_filter, proposal_type=proposal_type, run_id=run_id)
+    return service.list_proposals(
+        ontology_id,
+        status=status_filter,
+        proposal_type=proposal_type,
+        run_id=run_id,
+        origin=origin,
+        kg_build_id=kg_build_id,
+    )
 
 
 @router.get("/ontologies/{ontology_id}/proposals/stats", response_model=ProposalStats)

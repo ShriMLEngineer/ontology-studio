@@ -1,0 +1,5 @@
+subject_type,subject_id,relationship,object_type,object_id
+Supplier,S-001,supplies,Product,P-100
+Product,P-200,supplies,Supplier,S-002
+Supplier,S-003,supplies,Product,P-999
+Supplier,S-002,certified by,Auditor,A-01

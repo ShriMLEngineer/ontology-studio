@@ -54,7 +54,6 @@ const api = async (method, path, body) => {
 }
 const tab = (name) => page.getByRole('tab', { name })
 const detail = () => page.getByTestId('proposal-detail')
-const currentProposalId = () => detail().getAttribute('data-proposal-id')
 
 let project
 let ontology

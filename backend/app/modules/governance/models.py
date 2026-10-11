@@ -20,6 +20,11 @@ class ChangeProposal(TimestampMixin, Base):
     run_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("discovery_runs.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    # "discovery" (AI discovery run) or "kg_build" (ontology gap found while building a KG).
+    origin: Mapped[str] = mapped_column(String(16), default="discovery", server_default="discovery", nullable=False)
+    kg_build_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("kg_builds.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     proposal_type: Mapped[str] = mapped_column(String(16), nullable=False)
     element_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)

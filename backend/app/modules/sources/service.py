@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import BusinessRuleError, ConflictError, DomainError, NotFoundError
 from app.modules.activity.service import record_activity
 from app.modules.projects.repository import ProjectRepository
-from app.modules.sources.chunking import chunk_text
+from app.modules.sources.chunking import chunk_pages, chunk_text
 from app.modules.sources.models import SourceChunk, SourceDocument
 from app.modules.sources.parsing import SUPPORTED_EXTENSIONS, DocumentParseError, parser_for
 from app.modules.sources.schemas import SourceChunkRead, SourceDocumentDetail, SourceDocumentRead
@@ -79,7 +79,10 @@ class SourceService:
         except DocumentParseError as error:
             raise BusinessRuleError(str(error), code="DOCUMENT_PARSE_FAILED") from error
 
-        text_chunks = chunk_text(parsed.text, self.chunk_chars)
+        if parsed.pages:
+            text_chunks = chunk_pages(parsed.text, [(p.start, p.end) for p in parsed.pages], self.chunk_chars)
+        else:
+            text_chunks = chunk_text(parsed.text, self.chunk_chars)
         document = SourceDocument(
             project_id=project_id,
             filename=name,

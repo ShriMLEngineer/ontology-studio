@@ -61,14 +61,28 @@ def spec_of(proposal: ChangeProposal) -> ChangeSpec:
 
 
 def persist_drafts(
-    session: Session, *, ontology_id: str, run_id: str | None, drafts: list[ProposalDraft]
+    session: Session,
+    *,
+    ontology_id: str,
+    run_id: str | None,
+    drafts: list[ProposalDraft],
+    origin: str = "discovery",
+    kg_build_id: str | None = None,
+    actor: str = AI_ACTOR,
+    comment: str = "",
 ) -> list[ChangeProposal]:
-    """Store aligned discovery drafts as pending proposals with their verified evidence."""
+    """Store aligned drafts as pending proposals with their verified evidence.
+
+    Drafts come from AI discovery runs or from ontology gaps found while building a knowledge
+    graph (``origin="kg_build"``); both enter the same SME review workflow.
+    """
     created: dict[str, ChangeProposal] = {}
     for draft in drafts:
         proposal = ChangeProposal(
             ontology_id=ontology_id,
             run_id=run_id,
+            origin=origin,
+            kg_build_id=kg_build_id,
             proposal_type=draft.proposal_type,
             element_kind=draft.element_kind,
             status="pending",
@@ -92,8 +106,8 @@ def persist_drafts(
             session.add(
                 ProposalEvidence(
                     proposal_id=proposal.id,
-                    document_id=evidence.chunk.document_id if evidence.chunk else None,
-                    chunk_id=evidence.chunk.id if evidence.chunk else None,
+                    document_id=(evidence.chunk.document_id or None) if evidence.chunk else None,
+                    chunk_id=(evidence.chunk.id or None) if evidence.chunk else None,
                     document_name=evidence.chunk.document_name if evidence.chunk else "unknown",
                     page=evidence.chunk.page if evidence.chunk else None,
                     quote=evidence.quote,
@@ -103,12 +117,19 @@ def persist_drafts(
                     verified=True,
                 )
             )
+        details: dict[str, Any] = {
+            "llm_action": draft.alignment.get("llm_action"),
+            "notes": draft.alignment.get("notes", []),
+        }
+        if origin != "discovery":
+            details = {"origin": origin, "kg_build_id": kg_build_id, "notes": draft.alignment.get("notes", [])}
         session.add(
             ProposalEvent(
                 proposal_id=proposal.id,
                 event_type="created",
-                actor=AI_ACTOR,
-                details={"llm_action": draft.alignment.get("llm_action"), "notes": draft.alignment.get("notes", [])},
+                actor=actor,
+                comment=comment,
+                details=details,
             )
         )
     for draft in drafts:
@@ -157,6 +178,8 @@ class GovernanceService:
             id=proposal.id,
             ontology_id=proposal.ontology_id,
             run_id=proposal.run_id,
+            origin=proposal.origin,  # type: ignore[arg-type]
+            kg_build_id=proposal.kg_build_id,
             proposal_type=proposal.proposal_type,  # type: ignore[arg-type]
             element_kind=proposal.element_kind,  # type: ignore[arg-type]
             status=proposal.status,  # type: ignore[arg-type]
@@ -220,7 +243,14 @@ class GovernanceService:
     # ------------------------------------------------------------------------------ queries
 
     def list_proposals(
-        self, ontology_id: str, *, status: str | None = None, proposal_type: str | None = None, run_id: str | None = None
+        self,
+        ontology_id: str,
+        *,
+        status: str | None = None,
+        proposal_type: str | None = None,
+        run_id: str | None = None,
+        origin: str | None = None,
+        kg_build_id: str | None = None,
     ) -> list[ProposalSummary]:
         _, schema = self._draft_schema(ontology_id)
         stmt = select(ChangeProposal).where(ChangeProposal.ontology_id == ontology_id)
@@ -230,6 +260,10 @@ class GovernanceService:
             stmt = stmt.where(ChangeProposal.proposal_type == proposal_type)
         if run_id:
             stmt = stmt.where(ChangeProposal.run_id == run_id)
+        if origin:
+            stmt = stmt.where(ChangeProposal.origin == origin)
+        if kg_build_id:
+            stmt = stmt.where(ChangeProposal.kg_build_id == kg_build_id)
         proposals = list(self.session.scalars(stmt.order_by(ChangeProposal.created_at.desc(), ChangeProposal.id)))
         counts = self._evidence_counts([p.id for p in proposals])
         labels = self._labels(schema)

@@ -1,0 +1,4 @@
+po_number,order_date,supplier_id,product_id,quantity,total_amount
+PO-7001,2026-07-14,S-001,P-100,20,8400.00
+PO-7002,2026-08-02,S-002,P-200,100,1250.00
+PO-7003,2026-08-19,S-003,P-300,50,approx. 1000

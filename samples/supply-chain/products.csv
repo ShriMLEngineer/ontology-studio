@@ -1,0 +1,5 @@
+product_id,product_name,sku,unit_cost,supplier_id
+P-100,Hydraulic Pump HP-100,HP-100,420.00,S-001
+P-200,Steel Bracket SB-200,SB-200,12.50,S-002
+P-210,Control Valve CV-210,CV-210,88.00,S-001
+P-300,Polymer Housing PH-300,PH-300,19.90,S-003

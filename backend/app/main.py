@@ -19,6 +19,9 @@ from app.modules.activity.router import router as activity_router
 from app.modules.discovery.router import router as discovery_router
 from app.modules.discovery.service import mark_interrupted_runs
 from app.modules.governance.router import router as governance_router
+from app.modules.graph.sql_store import SqlGraphStore
+from app.modules.kg.orchestrator import mark_interrupted_builds
+from app.modules.kg.router import router as kg_router
 from app.modules.llm.service import build_llm_provider
 from app.modules.llm.service import router as llm_router
 from app.modules.ontology.router import router as ontology_router
@@ -78,6 +81,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             interrupted = mark_interrupted_runs(session)
             if interrupted:
                 logger.warning("Marked %s interrupted discovery run(s) as failed", interrupted)
+            interrupted_builds = mark_interrupted_builds(session)
+            if interrupted_builds:
+                logger.warning("Marked %s interrupted knowledge graph build(s) as failed", interrupted_builds)
         if settings.seed_demo_data:
             with session_factory() as session:
                 seed_demo_data(session)
@@ -95,6 +101,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_factory = session_factory
     app.state.llm_provider = build_llm_provider(settings)
     app.state.artifact_repository = FilesystemArtifactRepository(settings.artifact_dir)
+    # Graph persistence adapter (see app/modules/graph/store.py). The durable SQL adapter is used
+    # because no Neo4j / Cosmos DB Gremlin connection is configured.
+    app.state.graph_store_factory = SqlGraphStore
 
     app.add_middleware(
         CORSMiddleware,
@@ -115,5 +124,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(discovery_router)
     api.include_router(governance_router)
     api.include_router(registry_router)
+    api.include_router(kg_router)
     app.include_router(api)
     return app

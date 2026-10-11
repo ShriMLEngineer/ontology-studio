@@ -4,6 +4,16 @@ from app.db.base import Base
 from app.modules.activity.models import ActivityEvent
 from app.modules.discovery.models import DiscoveryRun
 from app.modules.governance.models import ChangeProposal, ProposalEvent, ProposalEvidence
+from app.modules.graph.models import GraphEdgeRecord, GraphVertexRecord
+from app.modules.kg.models import (
+    KgBuild,
+    KgBuildLog,
+    KgCandidateFact,
+    KgEntity,
+    KgEntityMention,
+    KgOntologyGap,
+    KgSourceMapping,
+)
 from app.modules.ontology.models import (
     DatatypePropertyRecord,
     ObjectPropertyRecord,
@@ -22,6 +32,15 @@ __all__ = [
     "ChangeProposal",
     "DatatypePropertyRecord",
     "DiscoveryRun",
+    "GraphEdgeRecord",
+    "GraphVertexRecord",
+    "KgBuild",
+    "KgBuildLog",
+    "KgCandidateFact",
+    "KgEntity",
+    "KgEntityMention",
+    "KgOntologyGap",
+    "KgSourceMapping",
     "ObjectPropertyRecord",
     "Ontology",
     "OntologyClassRecord",

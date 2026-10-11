@@ -1,0 +1,74 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 886 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+60 740 Td
+(Supplier Performance Review - Q3 2026) Tj T*
+(Prepared by Procurement Excellence for the Supply Chain Steering Committee.) Tj T*
+() Tj T*
+(1. Northwind Components) Tj T*
+(Northwind Components \(supplier S-001\) supplies the Hydraulic Pump HP-100 \(product P-100\)) Tj T*
+(and the Control Valve CV-210 \(product P-210\). Purchase order PO-7001 was issued to) Tj T*
+(Northwind Components on 2026-07-14 for 20 units of the Hydraulic Pump HP-100.) Tj T*
+(On-time delivery for Northwind Components was 97 percent this quarter.) Tj T*
+() Tj T*
+(2. Contoso Metals) Tj T*
+(Contoso Metals \(supplier S-002\) supplies the Steel Bracket SB-200 \(product P-200\).) Tj T*
+(Contoso Metals is certified by Bureau Veritas, an independent quality auditor, under) Tj T*
+(certificate ISO-9001-4471. Purchase order PO-7002 was issued to Contoso Metals on 2026-08-02.) Tj T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 583 >>
+stream
+BT
+/F1 11 Tf
+14 TL
+60 740 Td
+(3. Fabrikam Plastics) Tj T*
+(Fabrikam Plastics \(supplier S-003\) supplies the Polymer Housing PH-300 \(product P-300\).) Tj T*
+(The risk rating of Fabrikam Plastics was raised to high after two late deliveries in August.) Tj T*
+() Tj T*
+(4. Logistics) Tj T*
+(Shipment SH-9001 fulfils purchase order PO-7001. Shipment SH-9001 is carried by) Tj T*
+(Blue Yonder Freight and ships to the Rotterdam Distribution Center.) Tj T*
+() Tj T*
+(5. Watch list) Tj T*
+(Contoso is reviewing a new alloy line; the committee will revisit its tier next quarter.) Tj T*
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000191 00000 n 
+0000000317 00000 n 
+0000001254 00000 n 
+0000001380 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+2014
+%%EOF

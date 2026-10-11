@@ -44,6 +44,8 @@ class ProposalSummary(BaseModel):
     id: str
     ontology_id: str
     run_id: str | None
+    origin: Literal["discovery", "kg_build"] = "discovery"
+    kg_build_id: str | None = None
     proposal_type: ProposalType
     element_kind: ElementKind
     status: ProposalStatus

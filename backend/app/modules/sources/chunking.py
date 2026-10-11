@@ -50,3 +50,22 @@ def chunk_text(text: str, max_chars: int) -> list[TextChunk]:
             )
         start = end
     return chunks
+
+
+def chunk_pages(text: str, pages: list[tuple[int, int]], max_chars: int) -> list[TextChunk]:
+    """Chunk each page span separately so that every chunk lies on exactly one page.
+
+    ``pages`` holds (start, end) offsets into ``text``; chunk offsets refer to the full text.
+    """
+    chunks: list[TextChunk] = []
+    for page_start, page_end in pages:
+        for chunk in chunk_text(text[page_start:page_end], max_chars):
+            chunks.append(
+                TextChunk(
+                    index=len(chunks),
+                    start=page_start + chunk.start,
+                    end=page_start + chunk.end,
+                    text=chunk.text,
+                )
+            )
+    return chunks
