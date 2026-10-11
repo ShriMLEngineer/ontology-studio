@@ -48,6 +48,8 @@ export const queryKeys = {
   draftRdf: (ontologyId: string, format: string, revision: number) =>
     ['ontologies', ontologyId, 'rdf', format, revision] as const,
   axioms: (ontologyId: string) => ['ontologies', ontologyId, 'axioms'] as const,
+  shapes: (ontologyId: string) => ['ontologies', ontologyId, 'shapes'] as const,
+  validationPolicies: ['validation-policies'] as const,
   imports: (ontologyId: string) => ['ontologies', ontologyId, 'imports'] as const,
   entailments: (ontologyId: string, revision: number) => ['ontologies', ontologyId, 'entailments', revision] as const,
 }

@@ -22,6 +22,7 @@ from app.modules.ontology.models import (
     OntologyDiagramLayout,
     OntologyExtensionAxiomRecord,
     OntologyImportRecord,
+    OntologyShapeRecord,
 )
 from app.modules.projects.models import Project
 from app.modules.registry.models import OntologyVersion
@@ -49,6 +50,7 @@ __all__ = [
     "OntologyDiagramLayout",
     "OntologyExtensionAxiomRecord",
     "OntologyImportRecord",
+    "OntologyShapeRecord",
     "OntologyVersion",
     "Project",
     "ProposalEvent",

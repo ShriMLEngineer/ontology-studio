@@ -81,6 +81,7 @@ flowchart LR
 | 5 | Ontology validation | `validation` | Structural rules ✔ (reused for impact and publication) |
 | 6 | Registry & publishing | `registry` | ✔ Phase 2 (snapshots are the KG schema authority); Phase 4 `ols-semantic/2` packages |
 | 6b | Standards semantics (RDF/OWL import & export, preserved axioms, reasoning) | `semantics` | ✔ Phase 4.1 |
+| 6c | SHACL shapes (generation, authoring, PySHACL engine) and validation policies | `shacl`, `kg.policy`, `kg.rdf_candidates` | ✔ Phase 4.2 |
 | 7 | KG extraction | `kg.mapping`, `kg.extraction`, `kg.resolution` | ✔ Phase 3 |
 | 8 | Fact validation | `kg.validation` | ✔ Phase 3 (structural + evidence) |
 | 9 | Graph persistence & query | `graph`, `kg.queries` | ✔ Phase 3 (`SqlGraphStore`) |
@@ -153,6 +154,9 @@ erDiagram
 | `ontology_classes` / `ontology_object_properties` / `ontology_datatype_properties` | Draft elements; Phase 4 adds `iri` and `semantics` (JSON, only non-default values stored). `ontologies` gains `ontology_iri`, `prefixes`, `imports`, `require_domain_range`. |
 | `ontology_extension_axioms` | Preserved triples outside the profile: scope (`ontology`/`shapes`), kind, summary, N-Triples, anchor element ids, originating import. Never touched by draft saves. |
 | `ontology_imports` | RDF import records: file name, format, SHA-256, actor and the full import report. |
+| `ontology_shapes` | Authored SHACL node shapes of the draft (target class, severity, message, property constraints as JSON). Generated shapes are derived; imported SHACL lives in `ontology_extension_axioms` (scope `shapes`). |
+| `kg_candidate_facts.lanes` | Phase 4 per-fact lanes: policy (id, relaxed application checks), SHACL results with outcomes, entailment checks and inferred types. NULL for builds evaluated before Phase 4. |
+| `projects.data_namespace` | Optional base for instance IRIs (`{data_namespace}e/{vertex_id}`); default `{ontology IRI}/data/`, frozen per build. |
 | `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
 | `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
 | `kg_build_logs` | Append-only execution log per build and stage. |
@@ -270,7 +274,31 @@ stateDiagram-v2
 | `validation/rules.py` (extended) | `IRI_INVALID`, `DUPLICATE_IRI`, `ONTOLOGY_IRI_INVALID`, `IMPORT_IRI_INVALID`, `PREFIX_*`, `SEMANTIC_REFERENCE_INVALID`, `DISJOINT_WITH_RELATED_CLASS`, `CHARACTERISTICS_CONFLICT`, `EXTENSION_AXIOM_ORPHANED`; missing domain/range is an error only when `require_domain_range` is on. |
 
 Validation layers stay separate: **structural** rules (above), **OWL reasoning** (informational
-preview), **SHACL** (milestone 4.2) and **evidence** validation of KG facts (Phase 3).
+preview), **SHACL** (below) and **evidence** validation of KG facts (Phase 3).
+
+### 4.6c SHACL and validation policies (Phase 4.2)
+
+| Component | Responsibility |
+|---|---|
+| `shacl/shapes.py` | Deterministic shapes graph of a snapshot: **generated** constraint shapes (`required` → `sh:minCount 1`, single value → `sh:maxCount 1`, attribute datatype → `sh:datatype`, relationship range → `sh:class`), generated **signature** shapes (`sh:targetSubjectsOf`/`sh:targetObjectsOf` + `sh:class`, tagged `ols:shapeRole "signature"`), **authored** node shapes and **preserved** imported SHACL; a shape index maps shape IRIs back to elements. |
+| `shacl/engine.py` | PySHACL with `inference="none"` and the ontology graph mixed in (so `sh:class` respects `rdfs:subClassOf`); SHACL-SHACL meta-validation; works on copies because PySHACL adds vocabulary triples to the graphs it receives. |
+| `shacl/service.py` | Authored-shape CRUD (validated, audited, increments the draft revision), draft shapes export, sample-data validation, SHACL import as preserved shapes (meta-validated, de-duplicated). |
+| `kg/policy.py` | Immutable, versioned validation policies (`application-strict/1` default, `shacl-signature/1`, `infer-and-flag/1`); each build records the full policy configuration. |
+| `kg/rdf_candidates.py` | RDF view of structurally projectable candidates (asserted types only, typed literals) under `{data_namespace}e/`; SHACL lane; OWL 2 RL entailment lane for open-world policies; results mapped to facts by (focus, path, value), to entities for node-level results and via the index for signature shapes. |
+
+Publication materialises the shapes graph into the version package (`shapes.ttl`); later generator
+changes therefore never alter history. Builds on legacy versions derive shapes from the immutable
+snapshot at build time and label them so. New builds run **ten stages** (SHACL validation after
+structural validation); builds created earlier keep nine stages and are never re-judged.
+
+| Policy | Domain/range | SHACL | Entailment |
+|---|---|---|---|
+| `application-strict/1` | Application check rejects (reversal diagnosed) - Phase 3 behaviour | Violation → reject; Warning → warn; Info → info; generated `minCount` → warn; generated `maxCount` → info (conflicts stay quarantined by the application) | not run |
+| `shacl-signature/1` | Enforced by signature shapes; application check reported as information | as above; signature violations → reject | not run |
+| `infer-and-flag/1` | Not rejected; implications computed | as above | OWL 2 RL: incompatible implied types or inconsistencies → quarantine; refinements accepted and recorded |
+
+Under `application-strict/1` the outcome of every Phase 3 fact is unchanged (verified on the sample
+data: 51 accepted, 4 rejected, 2 quarantined); SHACL adds warnings for missing required values.
 
 ### 4.7 Knowledge-graph engineering (Phase 3)
 
@@ -399,6 +427,7 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | Governance | `GET /ontologies/{id}/proposals?status=&type=&run_id=&origin=&kg_build_id=`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
 | Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|rdfxml\|jsonld\|ntriples\|json\|manifest`, `GET /ontologies/{id}/compare` |
 | Semantics (Phase 4) | `GET /ontologies/{id}/rdf?format=&download=`, `POST(multipart) /projects/{id}/ontologies/import`, `GET /ontologies/{id}/imports`, `GET /ontologies/{id}/axioms`, `DELETE /ontologies/{id}/axioms/{aid}?deleted_by=`, `GET /ontologies/{id}/entailments` |
+| SHACL (Phase 4) | `GET/POST /ontologies/{id}/shapes`, `PUT/DELETE /ontologies/{id}/shapes/{sid}?actor=`, `GET /ontologies/{id}/shapes/rdf`, `POST /ontologies/{id}/shapes/validate`, `POST(multipart) /ontologies/{id}/shapes/import`, `GET /kg/validation-policies`; version export `format=shapes` |
 | KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
 | KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
 | Facts & entities | `GET /kg/builds/{id}/facts?status=&kind=&source_id=&predicate_id=&q=`, `GET /kg/facts/{id}`, `GET /kg/builds/{id}/entities?q=&method=`, `GET /kg/entities/{id}` |
@@ -426,6 +455,7 @@ Studio). Phase 2 functionality lives in **Ontology Studio** tabs:
 | AI Discovery | Provider status, source upload (drag & drop), run configuration (baseline draft or published version, SME focus), live run progress, results by type, discarded findings with reasons. |
 | SME Review | Queue with status/type/run filters and search; detail with validation impact, current vs proposed values, alignment notes (including where alignment overrode the model), rationale, verified evidence highlighted in context, editing, decisions with mandatory comments for reject/refine, review timeline, comments, and "Apply approved to draft". |
 | Validation | Structural validation of the saved draft (Phase 1). |
+| SHACL Shapes (Phase 4) | Well-formedness (SHACL-SHACL), authored shapes with a form editor (target class, severity, message, per-property min/max count, datatype, class, pattern, lengths, value range, allowed values), generated constraint and signature shapes (read-only), imported SHACL (preserved), sample-data validation, `shapes.ttl` download. |
 | RDF / OWL (Phase 4) | OWL export preview of the saved draft in four syntaxes with downloads; RDF import into a new ontology with the import report (modelled, preserved, superseded, added triples, warnings) and import history; preserved axioms with kind, anchors, orphan status, N-Triples and audited removal; OWL 2 RL reasoning preview. |
 | Registry | Publication preview (validation gate, changes since the last version, breaking changes, semantic-profile notes, preserved-axiom changes, suggested version), publish with release notes, version history with package format and checksum-verified downloads (legacy versions offer derived RDF syntaxes), version comparison. |
 
@@ -444,9 +474,9 @@ All Phase 3 functionality lives in **Knowledge Graph Studio** (build selector in
 
 | Tab | Capabilities |
 |---|---|
-| Pipeline | Configuration panel (published version with its classes/relationships, source selection and upload, preview, per-source mapping editor with preview, suggestion and live validation, extraction settings, configured LLM, readiness messages, save/start), execution status (nine stages with status, timing and summaries, real counts, errors, polled log), rebuild with another published version, build history and build comparison. |
+| Pipeline | Configuration panel (published version with its classes/relationships, source selection and upload, preview, per-source mapping editor with preview, suggestion and live validation, validation policy, extraction settings, configured LLM, readiness messages, save/start), execution status (nine stages with status, timing and summaries, real counts, errors, polled log), rebuild with another published version, build history and build comparison. |
 | Graph Explorer | Cytoscape.js canvas of the persisted graph (class colours, directed labelled edges, pan/zoom, layout, fit), entity search, class / relationship / source filters, table fallback, and a right-hand drawer for nodes (class, identifier, attributes, relationships) and relationships (subject → predicate → object) with traceability (build, ontology version) and every supporting fact's validation checks and source evidence (original record or page text with the quote highlighted). |
-| Fact Validation | All candidate facts with status filters (accepted / rejected / quarantined), kind, source and text filters, evidence status and first reason; drawer with ontology property, structural / evidence / resolution checks and source excerpts. |
+| Fact Validation | All candidate facts with status filters (accepted / rejected / quarantined), kind, source and text filters, evidence status, SHACL status and first reason; drawer with ontology property, structural checks, the SHACL lane (results with severity, policy outcome and shape), checks relaxed by the policy, the entailment lane, evidence / resolution checks and source excerpts. Builds evaluated before Phase 4 show "not run". |
 | Evaluation & Feedback | Metric cards with definitions and numerator/denominator, failure-reason breakdown, ontology gaps with evidence and proposal status, "Create change proposals" into SME Review. |
 
 ## 6. Extension points

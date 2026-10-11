@@ -472,7 +472,7 @@ export interface ApplyResult {
 
 // ----------------------------------------------------------------------------- Phase 2: registry
 
-export type ArtifactFormat = 'json' | 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples' | 'manifest'
+export type ArtifactFormat = 'json' | 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples' | 'shapes' | 'manifest'
 
 export interface VersionArtifact {
   format: ArtifactFormat
@@ -540,6 +540,7 @@ export interface SchemaDiff {
   suggested_bump: VersionBump | 'none'
   has_changes: boolean
   axiom_changes?: { axiom_id: string; kind: string; summary: string; change: 'added' | 'removed' }[]
+  shape_changes?: { shape_id: string; label: string; change: 'added' | 'removed' | 'modified' }[]
   notes?: string[]
 }
 
@@ -675,6 +676,19 @@ export interface BuildSettings {
   batch_chars: number
   extract_attributes: boolean
   instructions: string
+  /** Validation policy id (Phase 4); builds before Phase 4 report the default. */
+  validation_policy?: string
+}
+
+export interface ValidationPolicy {
+  id: string
+  name: string
+  description: string
+  signature: 'reject' | 'shacl' | 'infer_and_flag'
+  use_signature_shapes: boolean
+  entailment: boolean
+  shacl: Record<string, string>
+  default: boolean
 }
 
 export interface BuildStage {
@@ -801,6 +815,31 @@ export interface FactSummary {
   document_ids: string[]
   source_label: string
   graph_element_id: string | null
+  /** Most severe SHACL result; null for builds evaluated before Phase 4. */
+  shacl_status: 'conforms' | 'Violation' | 'Warning' | 'Info' | null
+  policy_id: string | null
+}
+
+export type LaneOutcome = 'reject' | 'quarantine' | 'warn' | 'info'
+
+export interface ShaclResultRead {
+  focus: string
+  path: string | null
+  value: string | null
+  severity: 'Violation' | 'Warning' | 'Info'
+  component: string
+  source_shape: string
+  shape_label: string | null
+  shape_origin: 'generated' | 'authored' | 'preserved'
+  shape_role: 'constraint' | 'signature'
+  message: string
+  outcome?: LaneOutcome
+}
+
+export interface FactLanes {
+  policy: { id: string; name: string; relaxed_checks: Check[] }
+  shacl: { conforms: boolean; results: ShaclResultRead[] }
+  entailment: { ran: boolean; passed: boolean; checks: Check[]; inferred_types: string[] }
 }
 
 export interface FactSourceRef {
@@ -838,6 +877,7 @@ export interface FactDetail extends FactSummary {
   resolution: { passed: boolean; checks: Check[] }
   sources: FactSourceRef[]
   excerpts: SourceExcerpt[]
+  lanes: FactLanes | null
   subject_vertex_id: string | null
   object_vertex_id: string | null
   build_id: string
@@ -1091,4 +1131,71 @@ export interface EntailmentReport {
   inconsistencies: string[]
   truncated: boolean
   duration_ms: number
+}
+
+// ------------------------------------------------------------------ SHACL shapes (Phase 4.2)
+
+export type ShapeSeverity = 'Violation' | 'Warning' | 'Info'
+export type NodeKind = 'IRI' | 'Literal' | 'BlankNode' | 'BlankNodeOrIRI' | 'BlankNodeOrLiteral' | 'IRIOrLiteral'
+
+export interface PropertyConstraint {
+  id?: string
+  path_id: string
+  min_count?: number | null
+  max_count?: number | null
+  datatype?: XsdDatatype | null
+  class_id?: string | null
+  node_kind?: NodeKind | null
+  allowed_values?: string[]
+  pattern?: string | null
+  min_length?: number | null
+  max_length?: number | null
+  min_inclusive?: string | null
+  max_inclusive?: string | null
+  severity?: ShapeSeverity | null
+  message?: string
+}
+
+export interface NodeShape {
+  id: string
+  target_class_id: string
+  label: string
+  description: string
+  severity: ShapeSeverity
+  message: string
+  deactivated: boolean
+  properties: PropertyConstraint[]
+}
+
+export type NodeShapeInput = Omit<NodeShape, 'id'>
+
+export interface GeneratedConstraint {
+  iri: string
+  property_id: string
+  property_label: string
+  kind: 'attribute' | 'relationship'
+  datatype: string | null
+  min_count: number | null
+  max_count: number | null
+  class_id: string | null
+}
+
+export interface ShapesOverview {
+  ontology_id: string
+  draft_revision: number
+  authored: NodeShape[]
+  generated: { iri: string; target_class_id: string; label: string; constraints: GeneratedConstraint[] }[]
+  signatures: { iri: string; property_id: string; side: 'domain' | 'range'; class_id: string; label: string }[]
+  preserved: { axiom_id: string; kind: string; summary: string; ntriples: string; anchor_ids: string[]; orphaned: boolean }[]
+  check: { well_formed: boolean; message: string }
+  triple_count: number
+}
+
+export interface ShaclValidationReport {
+  conforms: boolean
+  data_triples: number
+  shapes_used: number
+  duration_ms: number
+  by_severity: Record<string, number>
+  results: ShaclResultRead[]
 }

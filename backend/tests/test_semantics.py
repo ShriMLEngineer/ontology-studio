@@ -285,7 +285,7 @@ def test_import_api_preserves_axioms_through_designer_saves_and_publication(clie
     manifest = client.get(f"/api/ontologies/{oid}/versions/{version['id']}/export", params={"format": "manifest"}).json()
     assert manifest["package_format"] == "ols-semantic/2" and manifest["version_iri"] == f"{ONTO}/1.0.0"
     assert manifest["preserved_axioms"] == len(axioms) - 1
-    assert set(manifest["artifacts"]) == {"json", "turtle", "rdfxml", "jsonld", "ntriples"}
+    assert set(manifest["artifacts"]) == {"json", "turtle", "rdfxml", "jsonld", "ntriples", "shapes"}
 
 
 def test_import_targets_only_new_or_empty_ontologies(client: TestClient, ontology: dict[str, Any]) -> None:

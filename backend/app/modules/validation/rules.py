@@ -108,6 +108,7 @@ def validate_schema(schema: OntologySchema) -> list[ValidationIssue]:
     _check_iris(schema, elements, out)
     _check_semantics(schema, classes_by_id, out)
     _check_extension_axioms(schema, elements, out)
+    _check_shapes(schema, classes_by_id, out)
 
     return sorted(
         out.issues,
@@ -708,3 +709,44 @@ def _check_extension_axioms(schema: OntologySchema, elements: list[AnyElement], 
                 field=f"extension_axioms.{axiom.id}",
                 related=missing,
             )
+
+
+# ---------------------------------------------------------------------------------- SHACL shapes (Phase 4.2)
+
+
+def _check_shapes(schema: OntologySchema, classes_by_id: dict[str, ClassDefinition], out: _Collector) -> None:
+    object_ids = {p.id: p for p in schema.object_properties}
+    datatype_ids = {p.id: p for p in schema.datatype_properties}
+    for shape in schema.shapes:
+        def issue(code: str, message: str, related: Iterable[str] = ()) -> None:
+            out.add(code, Severity.ERROR, message, ElementKind.ONTOLOGY, field=f"shapes.{shape.id}", related=related)
+
+        if shape.target_class_id not in classes_by_id:
+            issue(
+                "SHAPE_TARGET_UNKNOWN",
+                f"SHACL shape '{shape.label}' targets class '{shape.target_class_id}', which no longer exists.",
+                [shape.target_class_id],
+            )
+        for constraint in shape.properties:
+            prop = object_ids.get(constraint.path_id) or datatype_ids.get(constraint.path_id)
+            if prop is None:
+                issue(
+                    "SHAPE_PATH_UNKNOWN",
+                    f"SHACL shape '{shape.label}' constrains property '{constraint.path_id}', which no longer exists.",
+                    [constraint.path_id],
+                )
+                continue
+            if constraint.class_id and (constraint.path_id not in object_ids or constraint.class_id not in classes_by_id):
+                issue(
+                    "SHAPE_CONSTRAINT_INVALID",
+                    f"SHACL shape '{shape.label}': the class constraint on '{prop.label}' needs a relationship and an "
+                    "existing class.",
+                    [constraint.class_id],
+                )
+            if constraint.datatype and constraint.path_id in object_ids:
+                issue(
+                    "SHAPE_CONSTRAINT_INVALID",
+                    f"SHACL shape '{shape.label}': '{prop.label}' is a relationship and cannot have a datatype constraint.",
+                    [prop.id],
+                )
+

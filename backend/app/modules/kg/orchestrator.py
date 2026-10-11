@@ -1,4 +1,7 @@
-"""KG build orchestrator: a deterministic, nine-stage workflow executed outside the HTTP request.
+"""KG build orchestrator: a deterministic, staged workflow executed outside the HTTP request.
+
+Builds created since Phase 4 run ten stages (SHACL validation after structural validation); builds
+created earlier keep their nine recorded stages and the Phase 3 evaluation.
 
 Every stage transition, count and log line is persisted on the build so the UI reports real
 progress. The workflow never raises: failures are recorded on the stage and the build. Only
@@ -37,6 +40,8 @@ from app.modules.kg.extraction import (
 from app.modules.kg.mapping import MappingSpec, transform_records, validate_mapping
 from app.modules.kg.models import KgBuild, KgBuildLog, KgCandidateFact, KgEntity, KgEntityMention, KgOntologyGap
 from app.modules.kg.ontology_view import OntologyView
+from app.modules.kg.policy import get_policy
+from app.modules.kg.rdf_candidates import build_candidate_graph, run_lanes
 from app.modules.kg.resolution import ResolutionResult, ResolvedEntity, resolve_entities
 from app.modules.kg.validation import (
     ACCEPTED,
@@ -49,8 +54,12 @@ from app.modules.kg.validation import (
     quarantine_conflicts,
 )
 from app.modules.llm.provider import LLMError, LLMOutputError, LLMProvider, LLMUsage
+from app.modules.registry.artifacts import ArtifactIntegrityError, FilesystemArtifactRepository, StoredArtifact
 from app.modules.registry.models import OntologyVersion
 from app.modules.registry.snapshot import OntologySnapshot
+from app.modules.semantics.graphs import parse_rdf
+from app.modules.semantics.owl import ontology_iri_of, snapshot_to_owl
+from app.modules.shacl.shapes import build_shapes_graph, index_shapes_graph
 from app.modules.sources.models import SourceDocument
 
 logger = logging.getLogger(__name__)
@@ -65,6 +74,7 @@ STAGES: list[tuple[str, str]] = [
     ("relationship_extraction", "Relationship extraction"),
     ("entity_resolution", "Entity resolution"),
     ("structural_validation", "Structural validation"),
+    ("shacl_validation", "SHACL validation"),
     ("evidence_validation", "Evidence validation"),
     ("graph_persistence", "Graph persistence"),
     ("evaluation", "Evaluation"),
@@ -277,6 +287,7 @@ class _Run:
             self.project_id = build.project_id
             self.ontology_id = build.ontology_id
             self.build_number = build.number
+            self.stage_keys = {stage["key"] for stage in build.stages or []}
             session.commit()
 
         self.stage_source_loading()
@@ -285,6 +296,8 @@ class _Run:
         self.stage_relationship_extraction()
         resolution = self.stage_entity_resolution()
         assessments = self.stage_structural_validation(resolution)
+        if "shacl_validation" in self.stage_keys:
+            self.stage_shacl_validation(resolution, assessments)
         self.stage_evidence_validation(resolution, assessments)
         self.stage_graph_persistence()
         self.stage_evaluation()
@@ -636,7 +649,78 @@ class _Run:
         )
         return fact_assessments
 
-    # ------------------------------------------------------------------ 7. evidence validation
+    # ------------------------------------------------------------------ 7. SHACL validation (Phase 4)
+
+    def stage_shacl_validation(
+        self,
+        resolution: ResolutionResult,
+        fact_assessments: dict[str, tuple[Assessment, ResolvedEntity | None, ResolvedEntity | None]],
+    ) -> None:
+        key = "shacl_validation"
+        self.tracker.start(key)
+        policy = get_policy(self.settings_values.get("validation_policy"))
+        snapshot = self.view.snapshot.with_iris()
+        with self.session_factory() as session:
+            version = session.get(OntologyVersion, self.version_id)
+            assert version is not None
+            artifacts = dict(version.artifacts or {})
+        if "shapes" in artifacts:
+            stored = StoredArtifact(**artifacts["shapes"])
+            try:
+                content = FilesystemArtifactRepository(self.settings.artifact_dir).read(stored)
+            except ArtifactIntegrityError as error:
+                raise StageFailure(f"The version's SHACL shapes failed their integrity check: {error}") from error
+            shapes = parse_rdf(content, "turtle")
+            index = index_shapes_graph(shapes, snapshot)
+            source = f"version package ({stored.filename}, sha256 {stored.sha256[:12]})"
+        else:
+            shapes, index = build_shapes_graph(snapshot)
+            source = "derived at build time from the published snapshot (the version predates SHACL packages)"
+        data_namespace = self.config.get("data_namespace") or f"{ontology_iri_of(snapshot)}/data/"
+        candidate = build_candidate_graph(
+            self.view, resolution, self.extraction.facts, fact_assessments, data_namespace
+        )
+        self.tracker.log(
+            key,
+            f"Policy {policy.id} ({policy.name}). Shapes: {source}; {len(candidate.graph)} asserted candidate "
+            f"triple(s) under {data_namespace}e/. Inference: none.",
+        )
+        lanes = run_lanes(
+            view=self.view,
+            policy=policy,
+            candidate=candidate,
+            shapes=shapes,
+            index=index,
+            ontology=snapshot_to_owl(snapshot, include_axioms=False),
+            shapes_source=source,
+            entity_assessments=self.entity_assessments,
+            fact_items={f.key: (f, *fact_assessments[f.key]) for f in self.extraction.facts},
+        )
+        report = lanes.as_dict()
+        for message in lanes.inconsistencies[:20]:
+            self.tracker.log(key, f"OWL 2 RL inconsistency: {message}", level="warning")
+        if lanes.unmapped_results:
+            self.tracker.log(key, f"{lanes.unmapped_results} SHACL result(s) could not be attributed to a fact.", level="warning")
+        self.stats["shacl"] = {**report, "policy": policy.id, "data_namespace": data_namespace, "data_triples": len(candidate.graph)}
+        self.tracker.merge_stats(shacl=self.stats["shacl"], policy=policy.config())
+        severity = report["by_severity"]
+        outcomes = report["by_outcome"]
+        self.tracker.complete(
+            key,
+            f"{report['results']} SHACL result(s) ({severity.get('Violation', 0)} violation, "
+            f"{severity.get('Warning', 0)} warning, {severity.get('Info', 0)} info) from {report['shapes_used']} "
+            f"shape(s); under {policy.id}: {outcomes.get('reject', 0)} reject, {outcomes.get('quarantine', 0)} "
+            f"quarantine, {outcomes.get('warn', 0)} warn, {outcomes.get('info', 0)} info."
+            + (f" {len(lanes.inconsistencies)} OWL 2 RL inconsistenc(y/ies)." if policy.entailment else ""),
+            {
+                "results": report["results"],
+                **{f"severity_{k.lower()}": v for k, v in severity.items()},
+                **{f"outcome_{k}": v for k, v in outcomes.items()},
+                "data_triples": len(candidate.graph),
+            },
+        )
+
+    # ------------------------------------------------------------------ 8. evidence validation
 
     def stage_evidence_validation(
         self,
@@ -690,6 +774,7 @@ class _Run:
                     evidence=assessment.evidence_dict(),
                     resolution=assessment.resolution_dict(),
                     reasons=assessment.reasons,
+                    lanes=assessment.lanes_dict(),
                     sources=[m.source.as_dict() for m in entity.mentions][:20],
                     document_ids=sorted({m.source.document_id for m in entity.mentions if m.source.document_id}),
                 )
@@ -763,11 +848,12 @@ class _Run:
             evidence=assessment.evidence_dict(),
             resolution=assessment.resolution_dict(),
             reasons=assessment.reasons,
+            lanes=assessment.lanes_dict(),
             sources=[candidate.source.as_dict()],
             document_ids=[candidate.source.document_id] if candidate.source.document_id else [],
         )
 
-    # ------------------------------------------------------------------ 8. graph persistence
+    # ------------------------------------------------------------------ 9. graph persistence
 
     def stage_graph_persistence(self) -> None:
         key = "graph_persistence"
@@ -851,7 +937,7 @@ class _Run:
             {"nodes": node_count, "edges": edge_count, "merged_duplicate_facts": duplicate_facts},
         )
 
-    # ------------------------------------------------------------------ 9. evaluation
+    # ------------------------------------------------------------------ 10. evaluation
 
     def _persist_gaps(self, session: Session) -> list[KgOntologyGap]:
         grouped: dict[str, tuple[GapCandidate, list[GapCandidate]]] = {}

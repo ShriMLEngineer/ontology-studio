@@ -1,8 +1,10 @@
 /**
- * End-to-end check of the Phase 4 semantic journey (Ontology Studio > RDF / OWL, Registry):
- * OWL export of the draft -> lossless RDF import with report -> preserved axioms -> OWL 2 RL
- * reasoning preview -> designer deletion orphans a preserved axiom -> publication blocked ->
- * axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
+ * End-to-end check of the Phase 4 semantic journey:
+ * 4.1  OWL export of the draft -> lossless RDF import with report -> preserved axioms -> OWL 2 RL
+ *      reasoning preview -> designer deletion orphans a preserved axiom -> publication blocked ->
+ *      axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
+ * 4.2  SHACL Shapes tab -> authored shape -> sample-data validation -> shapes.ttl in the package ->
+ *      KG build under a SHACL validation policy -> per-fact SHACL lane in Fact Validation.
  *
  *   npm run e2e:semantic
  *
@@ -10,6 +12,7 @@
  * ontology and publishes a version). No LLM is used.
  */
 import { mkdir, readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { chromium } from 'playwright-core'
@@ -18,6 +21,8 @@ const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 const CHANNEL = process.env.E2E_BROWSER_CHANNEL ?? 'msedge'
 const ARTIFACTS = fileURLToPath(new URL('./artifacts/', import.meta.url))
 const SAMPLE = fileURLToPath(new URL('../../samples/party-ontology.ttl', import.meta.url))
+const SUPPLY = fileURLToPath(new URL('../../samples/supply-chain/', import.meta.url))
+const STRUCTURED = ['suppliers.csv', 'products.csv', 'purchase_orders.csv', 'supply_relationships.csv']
 const REVIEWER = 'E2E Ontologist'
 
 function expect(condition, message) {
@@ -56,6 +61,8 @@ const tab = (name) => page.getByRole('tab', { name })
 let project
 let imported
 let report
+let supplyChain
+let build
 
 console.log(`Ontology Lifecycle Studio - Phase 4 semantic journey against ${BASE_URL}`)
 try {
@@ -172,6 +179,110 @@ try {
     expect(source.includes('Master data team') && ntriples.includes('"Master data team"'), 'custom annotation survives')
     expect(ntriples.includes('"Partei"@de'), 'second-language label survives')
     expect(ntriples.includes('<http://www.w3.org/2002/07/owl#minQualifiedCardinality>'), 'qualified restriction survives')
+  })
+
+  // ------------------------------------------------------------------ milestone 4.2: SHACL
+
+  await step('SHACL Shapes tab: generated shapes are well formed', async () => {
+    supplyChain = (await api('GET', `/projects/${project.id}/ontologies`)).body.find((o) => o.name === 'Supply Chain Core')
+    await page.goto(`${BASE_URL}/projects/${project.id}/ontology?ontology=${supplyChain.id}&tab=shapes`)
+    await page.getByTestId('shapes-well-formed').waitFor()
+    await page.getByTestId('generated-shapes').locator('summary').filter({ hasText: /^Product/ }).waitFor()
+  })
+
+  await step('Author a SHACL shape in the form editor', async () => {
+    await page.getByRole('button', { name: 'New shape' }).click()
+    const dialog = page.getByTestId('shape-dialog')
+    await dialog.getByLabel('Label').fill('Supplier naming')
+    await dialog.locator('#shape-target').click()
+    await page.getByRole('option', { name: 'Supplier', exact: true }).click()
+    await dialog.getByLabel('Message shown for results').fill("Legal names must start with 'Zz'.")
+    await dialog.getByRole('combobox', { name: 'Constraint 1 property' }).click()
+    await page.getByRole('option', { name: /^legal name . attribute of Organization/ }).click()
+    await dialog.getByLabel('Pattern (regular expression)').fill('^Zz')
+    await dialog.getByRole('button', { name: 'Save shape' }).click()
+    await page.getByTestId('authored-shape-row').filter({ hasText: 'Supplier naming' }).waitFor()
+    expect((await page.getByTestId('authored-shape-row').textContent()).includes('pattern /^Zz/'), 'constraint summary')
+  })
+
+  await step('Validate sample data against the draft shapes (no inference)', async () => {
+    const sample = `@prefix sc: <https://example.com/ontology/supply-chain#> . @prefix d: <https://example.org/d/> .
+d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
+    await page.getByLabel('Sample data (Turtle)').fill(sample)
+    await page.getByRole('button', { name: 'Validate', exact: true }).click()
+    const result = page.getByTestId('shacl-report')
+    await result.getByText('Does not conform').waitFor()
+    const text = await result.textContent()
+    expect(text.includes('Pattern') && text.includes('authored'), 'authored pattern violation reported')
+    await shot('05-shapes')
+  })
+
+  await step('Publish Supply Chain v1.0.0: the package includes shapes.ttl', async () => {
+    await tab('Registry').click()
+    await page.getByTestId('publish-validation').filter({ hasText: 'Validation gate passed' }).waitFor()
+    await page.getByRole('button', { name: /^Publish v1\.0\.0/ }).click()
+    await page.getByTestId('version-row').first().getByRole('link', { name: 'SHACL shapes' }).waitFor()
+    const version = (await api('GET', `/ontologies/${supplyChain.id}/versions`)).body[0]
+    const shapes = await api('GET', `/ontologies/${supplyChain.id}/versions/${version.id}/export?format=shapes`)
+    expect(shapes.body.includes('sh:pattern "^Zz"'), 'authored shape materialised in the version package')
+    supplyChain.version = version
+  })
+
+  await step('Knowledge Graph Studio offers the validation policies', async () => {
+    await page.goto(`${BASE_URL}/projects/${project.id}/knowledge-graph`)
+    const select = page.getByLabel('Validation policy', { exact: true })
+    await select.locator('option').nth(2).waitFor({ state: 'attached' })
+    const options = await select.locator('option').allTextContents()
+    expect(options.some((o) => o.includes('application-strict/1') && o.includes('default')), 'default policy listed')
+    expect(options.some((o) => o.includes('shacl-signature/1')) && options.some((o) => o.includes('infer-and-flag/1')), 'all policies')
+  })
+
+  await step('Build the KG under shacl-signature/1: ten stages including SHACL validation', async () => {
+    const ids = []
+    const mappingIds = []
+    for (const name of STRUCTURED) {
+      const response = await page.request.post(`${BASE_URL}/api/projects/${project.id}/sources`, {
+        multipart: { file: { name, mimeType: 'text/csv', buffer: await readFile(`${SUPPLY}${name}`) } },
+      })
+      const document = await response.json()
+      ids.push(document.id)
+      const suggestion = (await api('GET', `/sources/${document.id}/mapping-suggestion?ontology_version_id=${supplyChain.version.id}`)).body
+      const mapping = await api('POST', `/projects/${project.id}/kg/mappings`, {
+        document_id: document.id, ontology_version_id: supplyChain.version.id, name: `${basename(name, '.csv')} mapping`,
+        spec: suggestion.spec, updated_by: REVIEWER,
+      })
+      mappingIds.push(mapping.body.id)
+    }
+    const created = await api('POST', `/projects/${project.id}/kg/builds`, {
+      name: 'SHACL signature policy', ontology_version_id: supplyChain.version.id, source_document_ids: ids,
+      mapping_ids: mappingIds, requested_by: REVIEWER, start: true, settings: { validation_policy: 'shacl-signature/1' },
+    })
+    expect(created.status === 201, `build created: ${JSON.stringify(created.body).slice(0, 300)}`)
+    for (let i = 0; i < 60; i += 1) {
+      build = (await api('GET', `/kg/builds/${created.body.id}`)).body
+      if (build.status === 'completed' || build.status === 'failed') break
+      await page.waitForTimeout(500)
+    }
+    expect(build.status === 'completed', `build completed: ${build.error}`)
+    expect(build.stages.length === 10 && build.stats.shacl.shapes_source.startsWith('version package'), 'shapes from the package')
+    await page.goto(`${BASE_URL}/projects/${project.id}/knowledge-graph?build=${build.id}`)
+    await page.locator('[data-stage="shacl_validation"][data-stage-status="completed"]').waitFor()
+  })
+
+  await step('Fact Validation shows the SHACL lane, the policy and relaxed application checks', async () => {
+    await tab(/Fact Validation/).click()
+    await page.getByTestId('fact-filter-rejected').click()
+    await page.getByTestId('fact-row').filter({ hasText: 'Steel Bracket SB-200 → supplies → Contoso Metals GmbH' }).first().click()
+    const lanes = page.getByTestId('fact-lanes')
+    await lanes.getByText(/policy SHACL signatures \(shacl-signature\/1\)/).waitFor()
+    await lanes.getByText("Subjects of 'supplies' must be instances of Supplier.").waitFor()
+    await lanes.getByText(/Application checks reported as information/).waitFor()
+    await shot('06-fact-shacl-lane')
+    await page.getByRole('button', { name: 'Close panel' }).click()
+    await page.getByLabel('Fact kind').selectOption('attribute')
+    const legalName = page.getByTestId('fact-row').filter({ hasText: 'legal name' }).first()
+    await legalName.waitFor()
+    expect((await legalName.getByTestId('shacl-badge').textContent()) === 'Violation', 'authored shape rejected legal names')
   })
 
   const unexpected = consoleErrors.filter((e) => !e.includes('Download the React DevTools'))

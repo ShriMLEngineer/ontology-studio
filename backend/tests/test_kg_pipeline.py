@@ -14,14 +14,14 @@ def _build(seeded_client: TestClient) -> tuple[dict[str, Any], dict[str, Any]]:
     return env, run_build(env)
 
 
-def test_build_runs_all_nine_stages_with_persisted_logs(seeded_client: TestClient) -> None:
+def test_build_runs_all_ten_stages_with_persisted_logs(seeded_client: TestClient) -> None:
     env, build = _build(seeded_client)
     assert [s["key"] for s in build["stages"]] == [
         "source_loading", "content_parsing", "entity_extraction", "relationship_extraction", "entity_resolution",
-        "structural_validation", "evidence_validation", "graph_persistence", "evaluation",
+        "structural_validation", "shacl_validation", "evidence_validation", "graph_persistence", "evaluation",
     ]
     assert all(s["status"] == "completed" for s in build["stages"])
-    assert build["stages_completed"] == 9 and build["duration_ms"] is not None
+    assert build["stages_completed"] == 10 and build["stage_count"] == 10 and build["duration_ms"] is not None
     assert build["graph_store"] == "sql"
     assert build["stats"]["sources"]["records"] == 15
     logs = env["client"].get(f"/api/kg/builds/{build['id']}/logs").json()

@@ -30,10 +30,11 @@ const ARTIFACT_LABEL: Record<ArtifactFormat, string> = {
   rdfxml: 'RDF/XML',
   jsonld: 'JSON-LD',
   ntriples: 'N-Triples',
+  shapes: 'SHACL shapes',
   json: 'Snapshot JSON',
   manifest: 'Manifest',
 }
-const LEGACY_DERIVABLE: ArtifactFormat[] = ['rdfxml', 'jsonld', 'ntriples']
+const LEGACY_DERIVABLE: ArtifactFormat[] = ['rdfxml', 'jsonld', 'ntriples', 'shapes']
 
 function showValue(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value)
@@ -83,6 +84,17 @@ export function DiffView({ diff, labelOf }: { diff: SchemaDiff; labelOf: LabelRe
           <li key={c.field} className="px-3 py-2 text-sm">
             <span className="font-medium">Ontology {c.field}</span>: {showValue(c.before)} <ArrowRight className="inline size-3" />{' '}
             {showValue(c.after)}
+          </li>
+        ))}
+        {(diff.shape_changes ?? []).map((s) => (
+          <li key={`${s.change}-${s.shape_id}`} className="px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={cn('capitalize', CHANGE_STYLE[s.change])}>
+                {s.change}
+              </Badge>
+              <span className="text-xs text-muted-foreground">SHACL shape</span>
+              <span className="font-medium">{s.label}</span>
+            </div>
           </li>
         ))}
         {(diff.axiom_changes ?? []).map((a) => (
@@ -195,7 +207,7 @@ function PublishCard({
         </CardTitle>
         <CardDescription>
           Publishes draft revision {data.draft_revision} as an immutable version package: snapshot JSON, OWL in Turtle,
-          RDF/XML, JSON-LD and N-Triples, and a manifest.
+          RDF/XML, JSON-LD and N-Triples, SHACL shapes and a manifest.
           {data.latest_version ? ` Latest version: v${data.latest_version.version}.` : ' Nothing has been published yet.'}
         </CardDescription>
       </CardHeader>

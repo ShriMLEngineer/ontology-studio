@@ -19,11 +19,17 @@ import { plural } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 import { useReviewerName } from '@/features/ontology/governance/reviewer'
 import { FormField, NativeSelect } from '../fields'
-import { isTabular, useLlmStatus, useMappings, useSources, useVersionSnapshot } from '../hooks'
+import { isTabular, useLlmStatus, useMappings, useSources, useValidationPolicies, useVersionSnapshot } from '../hooks'
 import { SourcePreviewDialog } from '../SourcePreviewDialog'
 import { MappingEditorDialog } from './MappingEditorDialog'
 
-const DEFAULT_SETTINGS: BuildSettings = { max_chunks: 20, batch_chars: 6000, extract_attributes: true, instructions: '' }
+const DEFAULT_SETTINGS: BuildSettings = {
+  max_chunks: 20,
+  batch_chars: 6000,
+  extract_attributes: true,
+  instructions: '',
+  validation_policy: 'application-strict/1',
+}
 const ACCEPT = '.csv,.tsv,.pdf,.txt,.md,.markdown'
 
 function pickMapping(mappings: SourceMapping[], documentId: string, ontologyId: string | undefined): string | undefined {
@@ -48,6 +54,7 @@ export function BuildConfigPanel({
   const sources = useSources(projectId)
   const mappings = useMappings(projectId)
   const llm = useLlmStatus()
+  const policies = useValidationPolicies()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -307,6 +314,30 @@ export function BuildConfigPanel({
               })}
             </ul>
           )}
+        </section>
+
+        <section className="space-y-2" aria-label="Validation settings">
+          <FormField
+            label="Validation policy"
+            htmlFor="kg-policy"
+            hint={policies.data?.find((p) => p.id === (settings.validation_policy ?? 'application-strict/1'))?.description}
+          >
+            <NativeSelect
+              id="kg-policy"
+              value={settings.validation_policy ?? 'application-strict/1'}
+              onChange={(e) => setSettings((s) => ({ ...s, validation_policy: e.target.value }))}
+            >
+              {(policies.data ?? [{ id: 'application-strict/1', name: 'Application strict', default: true }]).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.id}){p.default ? ' - default' : ''}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+          <p className="text-[11px] text-muted-foreground">
+            Structural, SHACL, evidence and (for open-world policies) OWL 2 RL entailment results are recorded separately for
+            every fact; the policy only decides how they combine into accepted, rejected or quarantined.
+          </p>
         </section>
 
         <section className="space-y-3" aria-label="Extraction settings">

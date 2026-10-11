@@ -10,6 +10,7 @@ from app.modules.ontology.domain import (
     ClassDefinition,
     DatatypePropertyDefinition,
     ExtensionAxiom,
+    NodeShape,
     ObjectPropertyDefinition,
     OntologySchema,
     PrefixBinding,
@@ -41,6 +42,7 @@ class OntologySnapshot(BaseModel):
     object_properties: list[ObjectPropertyDefinition] = Field(default_factory=list)
     datatype_properties: list[DatatypePropertyDefinition] = Field(default_factory=list)
     extension_axioms: list[ExtensionAxiom] = Field(default_factory=list)
+    shapes: list[NodeShape] = Field(default_factory=list)
 
     @property
     def is_legacy(self) -> bool:
@@ -58,6 +60,7 @@ class OntologySnapshot(BaseModel):
             object_properties=self.object_properties,
             datatype_properties=self.datatype_properties,
             extension_axioms=self.extension_axioms,
+            shapes=self.shapes,
         )
 
     def with_iris(self) -> "OntologySnapshot":
@@ -93,6 +96,7 @@ def build_snapshot(metadata: SnapshotMetadata, schema: OntologySchema) -> Ontolo
         object_properties=sorted(schema.object_properties, key=lambda e: e.id),
         datatype_properties=sorted(schema.datatype_properties, key=lambda e: e.id),
         extension_axioms=sorted(schema.extension_axioms, key=lambda a: a.id),
+        shapes=sorted(schema.shapes, key=lambda s: s.id),
     )
 
 

@@ -15,6 +15,7 @@ from app.modules.kg.mapping import MappingSpec, suggest_mapping, validate_mappin
 from app.modules.kg.models import KgBuild, KgBuildLog, KgOntologyGap, KgSourceMapping
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.orchestrator import ACTIVE_STATUSES, STAGES, initial_stages
+from app.modules.kg.policy import get_policy
 from app.modules.kg.schemas import (
     BuildCreate,
     BuildDetail,
@@ -42,7 +43,9 @@ from app.modules.kg.schemas import (
 from app.modules.llm.provider import LLMNotConfiguredError, LLMProvider
 from app.modules.ontology.models import Ontology
 from app.modules.projects.repository import ProjectRepository
+from app.modules.projects.models import Project
 from app.modules.registry.models import OntologyVersion
+from app.modules.semantics.owl import ontology_iri_of
 from app.modules.registry.snapshot import OntologySnapshot
 from app.modules.sources.models import SourceDocument
 
@@ -359,7 +362,7 @@ class KgService:
             parent_build_id=build.parent_build_id,
             current_stage=build.current_stage,
             stages_completed=sum(1 for s in build.stages or [] if s["status"] == "completed"),
-            stage_count=len(STAGES),
+            stage_count=len(build.stages) or len(STAGES),
             stats=build.stats or {},
             graph_store=build.graph_store,
             provider=build.provider,
@@ -607,6 +610,15 @@ class KgService:
         self.session.delete(build)
         self.session.commit()
 
+    def _data_namespace(self, project_id: str, version: OntologyVersion) -> str:
+        """Base of instance IRIs, frozen per build: the project's data namespace, or one derived from
+        the ontology IRI of the selected version."""
+        project = self.session.get(Project, project_id)
+        if project is not None and project.data_namespace:
+            return project.data_namespace
+        snapshot = OntologySnapshot.model_validate(version.snapshot)
+        return f"{ontology_iri_of(snapshot)}/data/"
+
     def start_build(self, build_id: str, requested_by: str, provider: LLMProvider | None) -> KgBuild:
         build = self.require_build(build_id)
         if build.status != "configured":
@@ -657,6 +669,8 @@ class KgService:
                 {"id": m.id, "name": m.name, "document_id": m.document_id, "spec": m.spec} for m in mappings
             ],
             "settings": dict(build.settings or {}),
+            "validation_policy": get_policy((build.settings or {}).get("validation_policy")).config(),
+            "data_namespace": self._data_namespace(build.project_id, version),
             "llm": {"provider": provider.name, "model": provider.model, "prompt_version": PROMPT_VERSION}
             if has_text and provider
             else None,

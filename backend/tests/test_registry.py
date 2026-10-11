@@ -138,13 +138,13 @@ def test_publish_history_compare_and_export(seeded_client: TestClient, db_path: 
     v1 = first.json()
     assert v1["version"] == "1.0.0" and v1["sequence"] == 1 and v1["published_by"] == SME
     assert v1["validation_summary"]["is_valid"] is True
-    assert {a["format"] for a in v1["artifacts"]} == {"json", "turtle", "rdfxml", "jsonld", "ntriples", "manifest"}
+    assert {a["format"] for a in v1["artifacts"]} == {"json", "turtle", "rdfxml", "jsonld", "ntriples", "shapes", "manifest"}
     assert v1["package_format"] == "ols-semantic/2" and v1["snapshot_format"] == "ols.ontology-snapshot/2"
     assert seeded_client.get(f"/api/ontologies/{oid}").json()["latest_version"]["version"] == "1.0.0"
 
     artifact_dir = db_path.parent / "artifacts" / oid / v1["id"]
     files = list(artifact_dir.iterdir())
-    assert len(files) == 6 and all(not os.access(f, os.W_OK) for f in files), "artifacts are read-only"
+    assert len(files) == 7 and all(not os.access(f, os.W_OK) for f in files), "artifacts are read-only"
 
     again = _publish(seeded_client, oid)
     assert again.status_code == 409 and error_code(again) == "NOTHING_TO_PUBLISH"
@@ -188,7 +188,7 @@ def test_publish_history_compare_and_export(seeded_client: TestClient, db_path: 
 def test_tampered_artifacts_are_detected(seeded_client: TestClient, db_path: Path) -> None:
     _, ontology = _seeded(seeded_client)
     v1 = _publish(seeded_client, ontology["id"]).json()
-    path = next((db_path.parent / "artifacts" / ontology["id"] / v1["id"]).glob("*.ttl"))
+    path = db_path.parent / "artifacts" / ontology["id"] / v1["id"] / "sc-1.0.0.ttl"
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     path.write_text("# tampered", encoding="utf-8")
     response = seeded_client.get(f"/api/ontologies/{ontology['id']}/versions/{v1['id']}/export")

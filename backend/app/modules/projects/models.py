@@ -12,3 +12,5 @@ class Project(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     business_domain: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    # Base for knowledge-graph instance IRIs ({data_namespace}e/{vertex_id}); NULL = derived from the ontology IRI.
+    data_namespace: Mapped[str | None] = mapped_column(String(500), nullable=True)

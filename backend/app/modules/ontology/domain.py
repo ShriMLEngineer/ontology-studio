@@ -11,7 +11,7 @@ import re
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 ELEMENT_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,63}$"
 
@@ -186,6 +186,88 @@ class ExtensionAxiom(BaseModel):
     anchor_ids: list[str] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------------- SHACL shapes (Phase 4.2)
+
+ShapeSeverity = Literal["Violation", "Warning", "Info"]
+NodeKind = Literal["IRI", "Literal", "BlankNode", "BlankNodeOrIRI", "BlankNodeOrLiteral", "IRIOrLiteral"]
+ShapeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}$")]
+ShapeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)]
+
+
+class PropertyConstraint(BaseModel):
+    """A property shape on one ontology property (simple ``sh:path``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: ShapeId
+    path_id: ElementId = Field(description="Object or datatype property id used as sh:path")
+    min_count: int | None = Field(default=None, ge=0, le=100000)
+    max_count: int | None = Field(default=None, ge=0, le=100000)
+    datatype: XsdDatatype | None = None
+    class_id: ElementId | None = Field(default=None, description="sh:class (relationships)")
+    node_kind: NodeKind | None = None
+    allowed_values: list[Annotated[str, StringConstraints(max_length=500)]] = Field(
+        default_factory=list, max_length=200, description="sh:in (literals or IRIs)"
+    )
+    pattern: Annotated[str, StringConstraints(max_length=500)] | None = None
+    min_length: int | None = Field(default=None, ge=0)
+    max_length: int | None = Field(default=None, ge=0)
+    min_inclusive: Annotated[str, StringConstraints(max_length=100)] | None = None
+    max_inclusive: Annotated[str, StringConstraints(max_length=100)] | None = None
+    severity: ShapeSeverity | None = Field(default=None, description="Overrides the node shape severity")
+    message: ShapeText = ""
+
+    @field_validator("pattern")
+    @classmethod
+    def _valid_regex(cls, value: str | None) -> str | None:
+        if value:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"invalid regular expression: {exc}") from exc
+        return value or None
+
+    @model_validator(mode="after")
+    def _ranges(self) -> "PropertyConstraint":
+        if self.min_count is not None and self.max_count is not None and self.min_count > self.max_count:
+            raise ValueError("min_count must not exceed max_count")
+        if self.min_length is not None and self.max_length is not None and self.min_length > self.max_length:
+            raise ValueError("min_length must not exceed max_length")
+        return self
+
+    def is_empty(self) -> bool:
+        return not any(
+            (
+                self.min_count is not None,
+                self.max_count is not None,
+                self.datatype,
+                self.class_id,
+                self.node_kind,
+                self.allowed_values,
+                self.pattern,
+                self.min_length is not None,
+                self.max_length is not None,
+                self.min_inclusive,
+                self.max_inclusive,
+            )
+        )
+
+
+class NodeShape(BaseModel):
+    """An authored node shape targeting one ontology class (``sh:targetClass``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: ShapeId
+    target_class_id: ElementId
+    label: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    description: ShapeText = ""
+    severity: ShapeSeverity = "Violation"
+    message: ShapeText = ""
+    deactivated: bool = False
+    properties: list[PropertyConstraint] = Field(default_factory=list, max_length=200)
+
+
 class OntologySchema(BaseModel):
     """A complete, self-contained ontology schema snapshot."""
 
@@ -199,6 +281,7 @@ class OntologySchema(BaseModel):
     object_properties: list[ObjectPropertyDefinition] = Field(default_factory=list)
     datatype_properties: list[DatatypePropertyDefinition] = Field(default_factory=list)
     extension_axioms: list[ExtensionAxiom] = Field(default_factory=list)
+    shapes: list[NodeShape] = Field(default_factory=list, description="Authored SHACL node shapes")
 
 
 def default_ontology_iri(namespace: str) -> str:

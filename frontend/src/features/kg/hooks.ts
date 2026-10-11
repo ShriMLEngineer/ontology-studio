@@ -54,3 +54,8 @@ export function useLlmStatus() {
 export function isTabular(mediaType: string): boolean {
   return mediaType === 'text/csv' || mediaType === 'text/tab-separated-values'
 }
+
+export function useValidationPolicies() {
+  return useQuery({ queryKey: queryKeys.validationPolicies, queryFn: kgApi.policies, staleTime: Infinity })
+}
+

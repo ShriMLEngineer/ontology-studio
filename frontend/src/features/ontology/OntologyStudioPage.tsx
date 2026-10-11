@@ -29,9 +29,10 @@ import { ReviewerControl } from './governance/ReviewerControl'
 import { RegistryView } from './registry/RegistryView'
 import { ReviewView } from './review/ReviewView'
 import { SemanticsView } from './semantics/SemanticsView'
+import { ShapesView } from './shapes/ShapesView'
 import { ValidationView } from './validation/ValidationView'
 
-const TABS = ['designer', 'discovery', 'review', 'validation', 'semantics', 'registry'] as const
+const TABS = ['designer', 'discovery', 'review', 'validation', 'semantics', 'shapes', 'registry'] as const
 type StudioTab = (typeof TABS)[number]
 type ElementKind = 'class' | 'object_property' | 'datatype_property'
 
@@ -195,6 +196,7 @@ export function OntologyStudioPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="semantics">RDF / OWL</TabsTrigger>
+          <TabsTrigger value="shapes">SHACL Shapes</TabsTrigger>
           <TabsTrigger value="registry">Registry</TabsTrigger>
         </TabsList>
       </div>
@@ -249,6 +251,9 @@ export function OntologyStudioPage() {
       </TabsContent>
       <TabsContent value="semantics" className="min-h-0 flex-1 overflow-y-auto">
         {body ?? <SemanticsView projectId={projectId} ontologyId={activeOntology.id} editor={editor} />}
+      </TabsContent>
+      <TabsContent value="shapes" className="min-h-0 flex-1 overflow-y-auto">
+        {body ?? <ShapesView ontologyId={activeOntology.id} editor={editor} />}
       </TabsContent>
       <TabsContent value="registry" className="min-h-0 flex-1 overflow-y-auto">
         {body ?? <RegistryView projectId={projectId} ontologyId={activeOntology.id} editor={editor} />}

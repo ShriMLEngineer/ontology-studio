@@ -133,3 +133,28 @@ export function Stat({
     </div>
   )
 }
+
+const SHACL_BADGE: Record<string, { label: string; className: string }> = {
+  conforms: { label: 'Conforms', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+  Violation: { label: 'Violation', className: 'border-red-200 bg-red-50 text-red-700' },
+  Warning: { label: 'Warning', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+  Info: { label: 'Info', className: 'border-sky-200 bg-sky-50 text-sky-700' },
+}
+
+/** Most severe SHACL result of a fact; builds evaluated before Phase 4 show "not run". */
+export function ShaclBadge({ status }: { status: string | null }) {
+  if (!status) {
+    return (
+      <span className="text-[11px] text-muted-foreground" title="Build evaluated before Phase 4">
+        not run
+      </span>
+    )
+  }
+  const meta = SHACL_BADGE[status]
+  return (
+    <Badge variant="outline" className={cn('text-[10px]', meta.className)} data-testid="shacl-badge">
+      {meta.label}
+    </Badge>
+  )
+}
+

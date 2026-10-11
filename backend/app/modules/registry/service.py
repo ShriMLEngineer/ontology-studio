@@ -18,6 +18,7 @@ from app.modules.registry.diff import SchemaDiff, bump_version, diff_snapshots, 
 from app.modules.registry.models import OntologyVersion
 from app.modules.semantics.graphs import FORMATS, parse_rdf, serialize
 from app.modules.semantics.owl import ontology_iri_of, snapshot_to_owl
+from app.modules.shacl.shapes import build_shapes_graph
 from app.modules.registry.schemas import (
     PublishPreview,
     PublishRequest,
@@ -36,7 +37,7 @@ from app.modules.validation.rules import validate_schema
 from app.modules.validation.schemas import Severity
 from app.modules.validation.service import ValidationService
 
-ExportFormat = Literal["turtle", "json", "rdfxml", "jsonld", "ntriples", "manifest"]
+ExportFormat = Literal["turtle", "json", "rdfxml", "jsonld", "ntriples", "shapes", "manifest"]
 RDF_EXPORT_FORMATS = ("turtle", "rdfxml", "jsonld", "ntriples")
 DRAFT = "draft"
 PACKAGE_FORMAT = "ols-semantic/2"
@@ -328,6 +329,15 @@ class RegistryService:
                 media_type=info.media_type,
                 content=serialize(graph, fmt),
             )
+        shapes_graph, shape_index = build_shapes_graph(snapshot)
+        stored["shapes"] = self.artifacts.store(
+            ontology_id,
+            version_id,
+            fmt="shapes",
+            filename=f"{stem}.shapes.ttl",
+            media_type="text/turtle",
+            content=serialize(shapes_graph, "turtle"),
+        )
         onto = str(ontology_iri_of(snapshot))
         manifest = {
             "package_format": PACKAGE_FORMAT,
@@ -343,6 +353,7 @@ class RegistryService:
             "imports": snapshot.metadata.imports,
             "content_hash": digest,
             "preserved_axioms": len(snapshot.extension_axioms),
+            "shapes": shape_index.counts(),
             "artifacts": {
                 fmt: {"filename": a.filename, "media_type": a.media_type, "sha256": a.sha256, "size": a.size}
                 for fmt, a in stored.items()
@@ -375,6 +386,18 @@ class RegistryService:
                 return self.artifacts.read(artifact), artifact, False
             except ArtifactIntegrityError as error:
                 raise ArtifactUnavailableError(str(error)) from error
+        if fmt == "shapes":
+            # Legacy versions predate SHACL: shapes are generated from the immutable snapshot on request.
+            content = serialize(build_shapes_graph(OntologySnapshot.model_validate(version.snapshot).with_iris())[0], "turtle")
+            derived = StoredArtifact(
+                format="shapes",
+                filename=f"{version.snapshot['metadata']['prefix']}-{version.version}.shapes.derived.ttl",
+                path="",
+                media_type="text/turtle",
+                sha256=hashlib.sha256(content).hexdigest(),
+                size=len(content),
+            )
+            return content, derived, True
         if fmt in RDF_EXPORT_FORMATS and "turtle" in version.artifacts:
             source = StoredArtifact(**version.artifacts["turtle"])
             try:

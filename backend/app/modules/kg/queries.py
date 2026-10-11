@@ -118,6 +118,8 @@ class KgQueryService:
             document_ids=list(fact.document_ids or []),
             source_label=_source_label(fact),
             graph_element_id=fact.graph_element_id,
+            shacl_status=_shacl_status(fact),
+            policy_id=((fact.lanes or {}).get("policy") or {}).get("id"),
         )
 
     def _excerpts(self, fact: KgCandidateFact) -> list[SourceExcerpt]:
@@ -161,6 +163,7 @@ class KgQueryService:
             resolution=fact.resolution or {},
             sources=list(fact.sources or []),
             excerpts=self._excerpts(fact),
+            lanes=fact.lanes,
             subject_vertex_id=subject.vertex_id if subject else None,
             object_vertex_id=obj.vertex_id if obj else None,
             build_id=ctx.build.id,
@@ -535,3 +538,14 @@ class KgQueryService:
                 for k in keys
             ],
         )
+
+
+_SEVERITY_ORDER = ("Violation", "Warning", "Info")
+
+
+def _shacl_status(fact: KgCandidateFact) -> str | None:
+    if fact.lanes is None:
+        return None
+    severities = {r.get("severity") for r in (fact.lanes.get("shacl") or {}).get("results", [])}
+    return next((s for s in _SEVERITY_ORDER if s in severities), "conforms")
+

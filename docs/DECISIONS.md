@@ -452,3 +452,41 @@ declared domain/range are kept open; the ontology then uses `require_domain_rang
 turns missing domain/range into warnings, and knowledge-graph checks treat an open signature as
 admitting any class.
 
+## ADR-041 SHACL shapes are generated, authored or preserved - and never inferred over
+**Status:** Accepted (Phase 4.2; D4, D5)
+
+**Decision.** The shapes graph of a draft or version combines generated constraint shapes (from
+`required`, single value, datatype and range), generated signature shapes (domain/range, tagged
+with their role), SME-authored node shapes (structured subset of SHACL Core edited in a form) and
+imported SHACL kept verbatim. Publication materialises it into `shapes.ttl` in the version package.
+PySHACL always runs with `inference="none"` and the ontology graph mixed in; a regression test proves
+that RDFS inference would hide a reversed relationship. Imported SHACL is meta-validated
+(SHACL-SHACL) and enforced but not reinterpreted into the form model.
+
+## ADR-042 Validation policies are immutable, versioned definitions recorded per build
+**Status:** Accepted (Phase 4.2; D5 - refines the proposal's policy tables)
+
+**Decision.** Policies are code-defined with a versioned id (`key/version`); a build stores its
+policy id in its settings and the complete policy configuration in its frozen configuration, so the
+evaluation of every build stays reproducible even if later releases add policies or versions.
+Changing a policy's meaning requires a new version. `application-strict/1` (default) reproduces
+Phase 3 outcomes exactly; `shacl-signature/1` delegates domain/range to SHACL signature shapes;
+`infer-and-flag/1` quarantines (never rejects) facts whose implied types are incompatible with the
+asserted class or involved in an OWL 2 RL inconsistency.
+
+## ADR-043 Validation lanes are stored separately per fact; earlier builds are not re-judged
+**Status:** Accepted (Phase 4.2)
+
+**Decision.** Structural, SHACL, entailment, evidence and resolution results are stored separately
+(`kg_candidate_facts.lanes` for the Phase 4 lanes); the policy only decides how they combine into a
+status, and checks relaxed by a policy are kept as information. New builds run ten stages; builds
+created before Phase 4 keep their nine recorded stages, their facts keep `lanes = NULL` and the UI
+labels them "not run".
+
+## ADR-044 Instance IRIs use a frozen data namespace
+**Status:** Accepted (Phase 4.2; D7)
+
+**Decision.** Candidate entities are identified as `{data_namespace}e/{vertex_id}` in the RDF view
+(and later in RDF graph targets). The data namespace is the project's `data_namespace` or, by
+default, `{ontology IRI}/data/`; it is frozen in the build configuration at start.
+

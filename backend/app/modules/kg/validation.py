@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from app.modules.kg.canonical import STRUCTURED, FactCandidate, Mention
 from app.modules.kg.ontology_view import OntologyView
+from app.modules.kg.policy import SIGNATURE_CODES, ValidationPolicy
 from app.modules.kg.resolution import MISSING_IDENTIFIER, ResolvedEntity, normalize_name
 
 ACCEPTED = "accepted"
@@ -54,22 +55,60 @@ class Assessment:
     canonical_value: str | None = None
     status: str = REJECTED
     reasons: list[str] = field(default_factory=list)
+    # Phase 4 lanes. ``policy`` is None for the Phase 3 evaluation (no SHACL / entailment lanes).
+    policy: ValidationPolicy | None = None
+    shacl: list[dict[str, Any]] = field(default_factory=list)
+    entailment: list[Check] = field(default_factory=list)
+    inferred_types: list[str] = field(default_factory=list)
+
+    def _blocking_structural(self) -> list[Check]:
+        failed = [c for c in self.structural if not c.passed]
+        if self.policy is not None and self.policy.signature != "reject":
+            return [c for c in failed if c.code not in SIGNATURE_CODES]
+        return failed
 
     def finalize(self) -> "Assessment":
-        structural_ok = all(c.passed for c in self.structural)
+        blocking = self._blocking_structural()
         resolution_ok = all(c.passed for c in self.resolution)
-        if not structural_ok:
+        outcomes = {r["outcome"] for r in self.shacl}
+        entailment_ok = all(c.passed for c in self.entailment)
+        if blocking or "reject" in outcomes:
             self.status = REJECTED
-        elif not resolution_ok:
+        elif not resolution_ok or "quarantine" in outcomes:
             self.status = QUARANTINED
         elif self.evidence_status == MISSING:
             self.status = REJECTED
         elif self.evidence_status != SUPPORTED:
             self.status = QUARANTINED
+        elif not entailment_ok:
+            self.status = QUARANTINED
         else:
             self.status = ACCEPTED
-        self.reasons = [c.message for group in (self.structural, self.resolution, self.evidence) for c in group if not c.passed]
+        self.reasons = [
+            *(c.message for c in blocking),
+            *(c.message for group in (self.resolution, self.evidence) for c in group if not c.passed),
+            *(f"SHACL: {r['message']}" for r in self.shacl if r["outcome"] in ("reject", "quarantine")),
+            *(c.message for c in self.entailment if not c.passed),
+        ]
         return self
+
+    def lanes_dict(self) -> dict[str, Any] | None:
+        if self.policy is None:
+            return None
+        relaxed = [c.as_dict() for c in self.structural if not c.passed and c not in self._blocking_structural()]
+        return {
+            "policy": {"id": self.policy.id, "name": self.policy.name, "relaxed_checks": relaxed},
+            "shacl": {
+                "conforms": not self.shacl,
+                "results": self.shacl,
+            },
+            "entailment": {
+                "ran": self.policy.entailment,
+                "passed": all(c.passed for c in self.entailment),
+                "checks": [c.as_dict() for c in self.entailment],
+                "inferred_types": self.inferred_types,
+            },
+        }
 
     def structural_dict(self) -> dict[str, Any]:
         return {"passed": all(c.passed for c in self.structural), "checks": [c.as_dict() for c in self.structural]}

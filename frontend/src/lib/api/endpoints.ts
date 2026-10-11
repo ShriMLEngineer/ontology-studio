@@ -29,6 +29,8 @@ import type {
   MappingIssue,
   MappingSpec,
   MappingSuggestion,
+  NodeShape,
+  NodeShapeInput,
   Ontology,
   OntologyDraft,
   OntologyGap,
@@ -45,9 +47,12 @@ import type {
   PublishRequest,
   RdfFormat,
   SchemaDiff,
+  ShaclValidationReport,
+  ShapesOverview,
   SourceDocument,
   SourceMapping,
   SourcePreview,
+  ValidationPolicy,
   ValidationReport,
   VersionBump,
   VersionDetail,
@@ -174,6 +179,7 @@ function query(params: Record<string, string | string[] | number | undefined | n
 }
 
 export const kgApi = {
+  policies: () => http.get<ValidationPolicy[]>('/kg/validation-policies'),
   preview: (documentId: string) => http.get<SourcePreview>(`/sources/${enc(documentId)}/preview`),
   versions: (projectId: string) => http.get<PublishedVersionOption[]>(`/projects/${enc(projectId)}/kg/ontology-versions`),
   mappings: (projectId: string) => http.get<SourceMapping[]>(`/projects/${enc(projectId)}/kg/mappings`),
@@ -223,4 +229,31 @@ export const kgApi = {
       requested_by: requestedBy,
       comment,
     }),
+}
+
+export const shapesApi = {
+  overview: (ontologyId: string) => http.get<ShapesOverview>(`/ontologies/${enc(ontologyId)}/shapes`),
+  create: (ontologyId: string, body: NodeShapeInput, actor: string) =>
+    http.post<NodeShape>(`/ontologies/${enc(ontologyId)}/shapes?actor=${enc(actor)}`, body),
+  update: (ontologyId: string, shapeId: string, body: NodeShapeInput, actor: string) =>
+    http.put<NodeShape>(`/ontologies/${enc(ontologyId)}/shapes/${enc(shapeId)}?actor=${enc(actor)}`, body),
+  remove: (ontologyId: string, shapeId: string, actor: string) =>
+    http.delete(`/ontologies/${enc(ontologyId)}/shapes/${enc(shapeId)}?actor=${enc(actor)}`),
+  rdfUrl: (ontologyId: string) => apiUrl(`/ontologies/${enc(ontologyId)}/shapes/rdf?format=turtle&download=true`),
+  rdf: (ontologyId: string) => http.text(`/ontologies/${enc(ontologyId)}/shapes/rdf?format=turtle`),
+  validate: (ontologyId: string, data: string, includeSignatureShapes: boolean) =>
+    http.post<ShaclValidationReport>(`/ontologies/${enc(ontologyId)}/shapes/validate`, {
+      data,
+      rdf_format: 'turtle',
+      include_signature_shapes: includeSignatureShapes,
+    }),
+  importShapes: (ontologyId: string, file: File, actor: string) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('imported_by', actor)
+    return http.upload<{ preserved: ShapesOverview['preserved']; triples: number }>(
+      `/ontologies/${enc(ontologyId)}/shapes/import`,
+      form,
+    )
+  },
 }

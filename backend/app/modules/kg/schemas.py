@@ -3,10 +3,11 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.modules.governance.schemas import ProposalSummary
 from app.modules.kg.mapping import MappingSpec
+from app.modules.kg.policy import DEFAULT_POLICY_ID, POLICIES
 
 Actor = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -130,6 +131,25 @@ class BuildSettings(BaseModel):
     batch_chars: int = Field(default=6000, ge=1000, le=20000, description="Characters of text per LLM request")
     extract_attributes: bool = Field(default=True, description="Also extract attribute values from documents")
     instructions: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] = ""
+    validation_policy: str = Field(default=DEFAULT_POLICY_ID, description="Validation policy id (key/version)")
+
+    @field_validator("validation_policy")
+    @classmethod
+    def _known_policy(cls, value: str) -> str:
+        if value not in POLICIES:
+            raise ValueError(f"unknown validation policy '{value}'; use one of {', '.join(POLICIES)}")
+        return value
+
+
+class ValidationPolicyRead(BaseModel):
+    id: str
+    name: str
+    description: str
+    signature: str
+    use_signature_shapes: bool
+    entailment: bool
+    shacl: dict[str, str]
+    default: bool
 
 
 class BuildCreate(BaseModel):
@@ -270,6 +290,10 @@ class FactSummary(BaseModel):
     document_ids: list[str]
     source_label: str
     graph_element_id: str | None
+    shacl_status: Literal["conforms", "Violation", "Warning", "Info"] | None = Field(
+        default=None, description="Most severe SHACL result for the fact; None for builds evaluated before Phase 4"
+    )
+    policy_id: str | None = None
 
 
 class SourceExcerpt(BaseModel):
@@ -290,6 +314,7 @@ class FactDetail(FactSummary):
     resolution: dict[str, Any]
     sources: list[dict[str, Any]]
     excerpts: list[SourceExcerpt]
+    lanes: dict[str, Any] | None = Field(default=None, description="Policy, SHACL and entailment lanes (Phase 4)")
     subject_vertex_id: str | None
     object_vertex_id: str | None
     build_id: str

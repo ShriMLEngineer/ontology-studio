@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.ontology.domain import (
+    NodeShape,
     ClassDefinition,
     DatatypePropertyDefinition,
     ExtensionAxiom,
@@ -18,6 +19,7 @@ from app.modules.ontology.models import (
     OntologyClassRecord,
     OntologyDiagramLayout,
     OntologyExtensionAxiomRecord,
+    OntologyShapeRecord,
 )
 from app.modules.ontology.schemas import OntologyStats, PublishedVersionRef
 from app.modules.registry.models import OntologyVersion
@@ -49,6 +51,19 @@ DATATYPE_PROPERTY_FIELDS = (
 
 def _values(record: Any, fields: Iterable[str]) -> dict[str, Any]:
     return {f: getattr(record, f) for f in fields}
+
+
+def to_node_shape(record: "OntologyShapeRecord") -> NodeShape:
+    return NodeShape(
+        id=record.id,
+        target_class_id=record.target_class_id,
+        label=record.label,
+        description=record.description,
+        severity=record.severity,  # type: ignore[arg-type]
+        message=record.message,
+        deactivated=record.deactivated,
+        properties=record.properties or [],
+    )
 
 
 def to_class_definition(record: OntologyClassRecord) -> ClassDefinition:
@@ -240,7 +255,16 @@ class OntologyRepository:
                 )
                 for a in self.extension_axioms(ontology.id)
             ],
+            shapes=[to_node_shape(s) for s in self.shapes(ontology.id)],
         )
+
+    def shapes(self, ontology_id: str) -> list[OntologyShapeRecord]:
+        stmt = (
+            select(OntologyShapeRecord)
+            .where(OntologyShapeRecord.ontology_id == ontology_id)
+            .order_by(OntologyShapeRecord.sort_order, OntologyShapeRecord.created_at)
+        )
+        return list(self.session.scalars(stmt))
 
     def extension_axioms(self, ontology_id: str) -> list[OntologyExtensionAxiomRecord]:
         stmt = (

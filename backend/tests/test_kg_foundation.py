@@ -150,7 +150,9 @@ def test_build_configuration_is_saved_and_checked_for_readiness(seeded_client: T
     build = created.json()
     assert build["status"] == "configured"
     assert build["settings"]["max_chunks"] == 5
-    assert [s["status"] for s in build["stages"]] == ["pending"] * 9
+    assert [s["status"] for s in build["stages"]] == ["pending"] * 10
+    assert [s["key"] for s in build["stages"]][5:7] == ["structural_validation", "shacl_validation"]
+    assert build["settings"]["validation_policy"] == "application-strict/1"
     assert build["readiness"]["ready"] is False
     assert [i["code"] for i in build["readiness"]["issues"]] == ["MAPPING_REQUIRED"]
 

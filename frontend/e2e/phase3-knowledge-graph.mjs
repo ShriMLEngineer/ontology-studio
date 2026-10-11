@@ -164,7 +164,7 @@ try {
     await shot('05-configured')
   })
 
-  await step('Start the build and follow the nine pipeline stages', async () => {
+  await step('Start the build and follow the pipeline stages (ten since Phase 4)', async () => {
     await page.getByLabel('Build name (optional)').fill('Supplier network baseline')
     await page.getByRole('button', { name: 'Start build' }).click()
     await page.getByTestId('build-status').waitFor()

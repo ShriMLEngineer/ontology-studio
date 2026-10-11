@@ -45,6 +45,12 @@ class AxiomChange(BaseModel):
     change: Literal["added", "removed"]
 
 
+class ShapeChange(BaseModel):
+    shape_id: str
+    label: str
+    change: Literal["added", "removed", "modified"]
+
+
 class SchemaDiff(BaseModel):
     from_label: str
     to_label: str
@@ -55,6 +61,7 @@ class SchemaDiff(BaseModel):
     suggested_bump: Bump
     has_changes: bool
     axiom_changes: list[AxiomChange] = Field(default_factory=list)
+    shape_changes: list[ShapeChange] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 
@@ -145,6 +152,10 @@ def diff_snapshots(
         summary[kind] = counts
 
     axiom_changes = _axiom_changes(base, target)
+    shape_changes = _shape_changes(base, target)
+    if shape_changes:
+        # SHACL shapes constrain data, not the vocabulary: a shape-only change is a patch release.
+        bump = _max_bump(bump, "patch")
     for change in axiom_changes:
         if change.change == "added":
             bump = _max_bump(bump, "minor")
@@ -175,8 +186,9 @@ def diff_snapshots(
         summary=summary,
         breaking_changes=breaking,
         suggested_bump=bump if base is not None else "major",
-        has_changes=bool(metadata_changes or elements or axiom_changes or notes),
+        has_changes=bool(metadata_changes or elements or axiom_changes or shape_changes or notes),
         axiom_changes=axiom_changes,
+        shape_changes=shape_changes,
         notes=notes,
     )
 
@@ -207,3 +219,17 @@ def _axiom_changes(base: OntologySnapshot | None, target: OntologySnapshot) -> l
         if key not in after
     ]
     return sorted(changes, key=lambda c: (c.change, c.kind, c.summary))
+
+
+def _shape_changes(base: OntologySnapshot | None, target: OntologySnapshot) -> list[ShapeChange]:
+    before = {s.id: s for s in (base.shapes if base else [])}
+    after = {s.id: s for s in target.shapes}
+    changes = [ShapeChange(shape_id=i, label=s.label, change="added") for i, s in after.items() if i not in before]
+    changes += [ShapeChange(shape_id=i, label=s.label, change="removed") for i, s in before.items() if i not in after]
+    changes += [
+        ShapeChange(shape_id=i, label=s.label, change="modified")
+        for i, s in after.items()
+        if i in before and before[i].model_dump(mode="json") != s.model_dump(mode="json")
+    ]
+    return sorted(changes, key=lambda c: (c.change, c.label.lower()))
+

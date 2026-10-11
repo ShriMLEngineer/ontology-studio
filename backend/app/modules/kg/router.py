@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_session
 from app.modules.kg.feedback import KgFeedbackService
 from app.modules.kg.orchestrator import execute_kg_build
+from app.modules.kg.policy import DEFAULT_POLICY_ID, POLICIES
 from app.modules.kg.queries import KgQueryService
 from app.modules.kg.schemas import (
+    ValidationPolicyRead,
     BuildComparison,
     BuildCreate,
     BuildDetail,
@@ -73,6 +75,15 @@ def _schedule(request: Request, background: BackgroundTasks, provider: LLMProvid
 @router.get("/sources/{document_id}/preview", response_model=SourcePreview)
 def preview_source(document_id: str, service: Service, rows: Annotated[int, Query(ge=1, le=200)] = 20) -> SourcePreview:
     return service.preview(document_id, rows)
+
+
+@router.get("/kg/validation-policies", response_model=list[ValidationPolicyRead])
+def list_validation_policies() -> list[ValidationPolicyRead]:
+    """Immutable, versioned validation policies; builds record the full policy they ran with."""
+    return [
+        ValidationPolicyRead(**policy.config(), default=policy.id == DEFAULT_POLICY_ID)  # type: ignore[arg-type]
+        for policy in POLICIES.values()
+    ]
 
 
 @router.get("/projects/{project_id}/kg/ontology-versions", response_model=list[PublishedVersionOption])

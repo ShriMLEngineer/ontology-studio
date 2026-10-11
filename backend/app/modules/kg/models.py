@@ -186,6 +186,8 @@ class KgCandidateFact(Base):
     sources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     document_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     graph_element_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Phase 4 per-lane results (policy, SHACL, entailment); NULL for builds evaluated before Phase 4.
+    lanes: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
 
 

@@ -129,3 +129,27 @@ class OntologyImportRecord(Base):
     report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     imported_by: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+
+
+class OntologyShapeRecord(TimestampMixin, Base):
+    """An authored SHACL node shape of an ontology draft (property constraints as JSON).
+
+    Generated shapes are derived from the elements and preserved SHACL lives in
+    ``ontology_extension_axioms`` (scope ``shapes``); neither is stored here.
+    """
+
+    __tablename__ = "ontology_shapes"
+
+    ontology_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ontologies.id", ondelete="CASCADE"), primary_key=True
+    )
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_class_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), default="Violation", nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    deactivated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    properties: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+

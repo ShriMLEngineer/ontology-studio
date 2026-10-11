@@ -2,6 +2,7 @@ import { FileSpreadsheet, FileText } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import type { FactDetail, FactSourceRef, SourceExcerpt } from '@/lib/api/types'
+import { ShaclResultList } from '@/features/ontology/shapes/ShaclResults'
 import { factStatement } from '../meta'
 import { CheckList, EvidenceBadge, FactStatusBadge, Highlighted } from '../shared'
 
@@ -118,8 +119,14 @@ export function FactProvenance({ fact, showStatement = true }: { fact: FactDetai
       </dl>
       <section className="space-y-1.5">
         <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Structural validation</h4>
-        <CheckList checks={fact.structural.checks} />
+        <CheckList
+          checks={fact.structural.checks.filter(
+            // Checks relaxed by the policy are listed with the SHACL lane, as information.
+            (c) => c.passed || !fact.lanes?.policy.relaxed_checks.some((r) => r.code === c.code),
+          )}
+        />
       </section>
+      <LaneSections fact={fact} />
       <section className="space-y-1.5">
         <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Evidence validation</h4>
         <CheckList checks={fact.evidence.checks} />
@@ -137,3 +144,56 @@ export function FactProvenance({ fact, showStatement = true }: { fact: FactDetai
     </div>
   )
 }
+
+function LaneSections({ fact }: { fact: FactDetail }) {
+  const lanes = fact.lanes
+  if (!lanes) {
+    return (
+      <section className="space-y-1.5" data-testid="fact-lanes">
+        <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SHACL validation</h4>
+        <p className="text-xs text-muted-foreground">
+          Not run: this build was evaluated before Phase 4 (structural and evidence validation only). Earlier builds are
+          never re-judged.
+        </p>
+      </section>
+    )
+  }
+  return (
+    <>
+      <section className="space-y-1.5" data-testid="fact-lanes">
+        <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          SHACL validation <span className="font-normal normal-case">· policy {lanes.policy.name} ({lanes.policy.id})</span>
+        </h4>
+        {lanes.shacl.results.length === 0 ? (
+          <p className="text-xs text-emerald-700">Conforms to all shapes that apply to this fact.</p>
+        ) : (
+          <ShaclResultList results={lanes.shacl.results} />
+        )}
+        {lanes.policy.relaxed_checks.length > 0 && (
+          <div className="space-y-1 rounded-lg border border-dashed p-2">
+            <p className="text-[11px] text-muted-foreground">
+              Application checks reported as information under this policy (not used for the outcome):
+            </p>
+            <CheckList checks={lanes.policy.relaxed_checks} />
+          </div>
+        )}
+      </section>
+      {lanes.entailment.ran && (
+        <section className="space-y-1.5">
+          <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">OWL 2 RL entailment (not persisted)</h4>
+          {lanes.entailment.checks.length > 0 ? (
+            <CheckList checks={lanes.entailment.checks} />
+          ) : (
+            <p className="text-xs text-muted-foreground">No inconsistency involves this fact.</p>
+          )}
+          {lanes.entailment.inferred_types.length > 0 && (
+            <p className="text-xs">
+              Inferred: {lanes.entailment.inferred_types.join('; ')}
+            </p>
+          )}
+        </section>
+      )}
+    </>
+  )
+}
+

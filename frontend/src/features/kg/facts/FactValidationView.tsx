@@ -11,7 +11,7 @@ import type { BuildDetail, FactKind, FactStatus } from '@/lib/api/types'
 import { queryKeys } from '@/lib/query'
 import { NativeSelect } from '../fields'
 import { FACT_STATUS_META, factStatement } from '../meta'
-import { EvidenceBadge, FactStatusBadge } from '../shared'
+import { EvidenceBadge, FactStatusBadge, ShaclBadge } from '../shared'
 import { FactProvenance } from './FactProvenance'
 
 const STATUS_FILTERS: { value: FactStatus | ''; label: string }[] = [
@@ -126,6 +126,7 @@ export function FactValidationView({ build }: { build: BuildDetail }) {
                   <th className="py-2 pr-3 font-medium">Status</th>
                   <th className="py-2 pr-3 font-medium">Candidate fact</th>
                   <th className="py-2 pr-3 font-medium">Evidence</th>
+                  <th className="py-2 pr-3 font-medium">SHACL</th>
                   <th className="py-2 pr-3 font-medium">Reason</th>
                   <th className="py-2 font-medium">Source</th>
                 </tr>
@@ -153,6 +154,9 @@ export function FactValidationView({ build }: { build: BuildDetail }) {
                     </td>
                     <td className="py-2 pr-3">
                       <EvidenceBadge status={fact.evidence_status} />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <ShaclBadge status={fact.shacl_status} />
                     </td>
                     <td className="max-w-md py-2 pr-3 text-xs text-muted-foreground">
                       {fact.status === 'accepted' ? '—' : (fact.reasons[0] ?? '—')}
