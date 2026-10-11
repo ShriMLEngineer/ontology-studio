@@ -43,6 +43,11 @@ class BusinessRuleError(DomainError):
     code = "BUSINESS_RULE_VIOLATION"
 
 
+class UnavailableError(DomainError):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    code = "SERVICE_UNAVAILABLE"
+
+
 def _envelope(code: str, message: str, details: Any = None) -> dict[str, Any]:
     return {"error": {"code": code, "message": message, "details": details or {}}}
 

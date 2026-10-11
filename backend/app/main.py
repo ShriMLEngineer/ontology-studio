@@ -12,12 +12,16 @@ from sqlalchemy.orm import Session
 from app import __version__
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
+from app.db import models as _all_models  # noqa: F401  (registers every table for FK resolution)
 from app.db.migrations import upgrade_database
 from app.db.session import create_db_engine, create_session_factory, get_session
 from app.modules.activity.router import router as activity_router
+from app.modules.llm.service import build_llm_provider
+from app.modules.llm.service import router as llm_router
 from app.modules.ontology.router import router as ontology_router
 from app.modules.projects.router import router as projects_router
 from app.modules.seed.service import seed_demo_data
+from app.modules.sources.router import router as sources_router
 from app.modules.validation.router import router as validation_router
 
 logger = logging.getLogger("ontology_studio")
@@ -80,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
+    app.state.llm_provider = build_llm_provider(settings)
 
     app.add_middleware(
         CORSMiddleware,
@@ -95,5 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(activity_router)
     api.include_router(ontology_router)
     api.include_router(validation_router)
+    api.include_router(llm_router)
+    api.include_router(sources_router)
     app.include_router(api)
     return app

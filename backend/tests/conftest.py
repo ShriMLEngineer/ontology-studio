@@ -9,14 +9,21 @@ from app.core.config import Settings
 from app.main import create_app
 
 
-def make_settings(db_path: Path, *, seed: bool = False) -> Settings:
-    return Settings(
-        database_url=f"sqlite:///{db_path.as_posix()}",
-        seed_demo_data=seed,
-        auto_migrate=True,
-        cors_origins=[],
-        log_level="WARNING",
-    )
+def make_settings(db_path: Path, *, seed: bool = False, **overrides: Any) -> Settings:
+    values: dict[str, Any] = {
+        "database_url": f"sqlite:///{db_path.as_posix()}",
+        "seed_demo_data": seed,
+        "auto_migrate": True,
+        "cors_origins": [],
+        "log_level": "WARNING",
+        "artifact_dir": db_path.parent / "artifacts",
+        # Never let a developer's .env point tests at a real LLM.
+        "llm_base_url": None,
+        "llm_model": None,
+        "llm_api_key": None,
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 @pytest.fixture
