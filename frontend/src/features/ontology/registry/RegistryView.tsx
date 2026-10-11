@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError, errorMessage } from '@/lib/api/client'
 import { registryApi } from '@/lib/api/endpoints'
-import type { SchemaDiff, VersionBump, VersionSummary } from '@/lib/api/types'
+import type { ArtifactFormat, SchemaDiff, VersionBump, VersionSummary } from '@/lib/api/types'
 import { dateTime, plural, relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 import type { DraftEditor } from '../draft/useDraftEditor'
@@ -25,6 +25,19 @@ import { makeLabelResolver, type LabelResolver } from '../review/labels'
 import { FieldValue } from '../review/parts'
 
 const DRAFT = 'draft'
+const ARTIFACT_LABEL: Record<ArtifactFormat, string> = {
+  turtle: 'Turtle (.ttl)',
+  rdfxml: 'RDF/XML',
+  jsonld: 'JSON-LD',
+  ntriples: 'N-Triples',
+  json: 'Snapshot JSON',
+  manifest: 'Manifest',
+}
+const LEGACY_DERIVABLE: ArtifactFormat[] = ['rdfxml', 'jsonld', 'ntriples']
+
+function showValue(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
 const CHANGE_STYLE = {
   added: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   modified: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -45,6 +58,13 @@ export function DiffView({ diff, labelOf }: { diff: SchemaDiff; labelOf: LabelRe
         )}
         {diff.suggested_bump !== 'none' && <Badge variant="secondary">Suggested bump: {diff.suggested_bump}</Badge>}
       </div>
+      {(diff.notes ?? []).map((note, i) => (
+        <Alert key={i} data-testid="diff-note">
+          <AlertTriangle />
+          <AlertTitle>Semantic profile change</AlertTitle>
+          <AlertDescription>{note}</AlertDescription>
+        </Alert>
+      ))}
       {diff.breaking_changes.length > 0 && (
         <Alert>
           <AlertTriangle />
@@ -61,7 +81,19 @@ export function DiffView({ diff, labelOf }: { diff: SchemaDiff; labelOf: LabelRe
       <ul className="divide-y rounded-lg border">
         {diff.metadata_changes.map((c) => (
           <li key={c.field} className="px-3 py-2 text-sm">
-            <span className="font-medium">Ontology {c.field}</span>: {String(c.before)} <ArrowRight className="inline size-3" /> {String(c.after)}
+            <span className="font-medium">Ontology {c.field}</span>: {showValue(c.before)} <ArrowRight className="inline size-3" />{' '}
+            {showValue(c.after)}
+          </li>
+        ))}
+        {(diff.axiom_changes ?? []).map((a) => (
+          <li key={`${a.change}-${a.axiom_id}`} className="px-3 py-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className={cn('capitalize', CHANGE_STYLE[a.change])}>
+                {a.change}
+              </Badge>
+              <span className="text-xs text-muted-foreground">Preserved axiom ? {a.kind}</span>
+              <span className="font-mono text-xs">{a.summary}</span>
+            </div>
           </li>
         ))}
         {diff.elements.map((element) => (
@@ -162,7 +194,8 @@ function PublishCard({
           <PackageCheck className="size-4" /> Publish a new version
         </CardTitle>
         <CardDescription>
-          Publishes draft revision {data.draft_revision} as an immutable snapshot with Turtle and JSON artifacts.
+          Publishes draft revision {data.draft_revision} as an immutable version package: snapshot JSON, OWL in Turtle,
+          RDF/XML, JSON-LD and N-Triples, and a manifest.
           {data.latest_version ? ` Latest version: v${data.latest_version.version}.` : ' Nothing has been published yet.'}
         </CardDescription>
       </CardHeader>
@@ -361,6 +394,9 @@ export function RegistryView({ projectId, ontologyId, editor }: { projectId: str
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className="font-mono">v{v.version}</Badge>
                       {index === 0 && <Badge variant="outline">Latest</Badge>}
+                      <Badge variant="outline" className="text-[10px]" title={v.snapshot_format}>
+                        {v.package_format}
+                      </Badge>
                       <span className="text-sm text-muted-foreground" title={dateTime(v.published_at)}>
                         {v.published_by} · {relativeTime(v.published_at)} · from draft r{v.draft_revision}
                       </span>
@@ -370,14 +406,28 @@ export function RegistryView({ projectId, ontologyId, editor }: { projectId: str
                       {plural(v.datatype_property_count, 'attribute')} · sha256 {v.content_hash.slice(0, 12)}…
                     </p>
                     {v.release_notes && <p className="mt-1.5 text-sm">{v.release_notes}</p>}
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       {v.artifacts.map((artifact) => (
                         <Button key={artifact.format} variant="outline" size="xs" asChild>
                           <a href={registryApi.exportUrl(ontologyId, v.id, artifact.format)} download={artifact.filename}>
-                            <Download /> {artifact.format === 'turtle' ? 'Turtle (.ttl)' : 'JSON'}
+                            <Download /> {ARTIFACT_LABEL[artifact.format] ?? artifact.format}
                           </a>
                         </Button>
                       ))}
+                      {v.snapshot_format === 'ols.ontology-snapshot/1' &&
+                        LEGACY_DERIVABLE.map((format) => (
+                          <Button
+                            key={format}
+                            variant="ghost"
+                            size="xs"
+                            asChild
+                            title="Derived from the stored Turtle on download; not part of the original publication"
+                          >
+                            <a href={registryApi.exportUrl(ontologyId, v.id, format)}>
+                              <Download /> {ARTIFACT_LABEL[format]} (derived)
+                            </a>
+                          </Button>
+                        ))}
                     </div>
                   </li>
                 ))}

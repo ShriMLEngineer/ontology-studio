@@ -21,6 +21,7 @@ from app.modules.ontology.domain import (
     DatatypePropertyDefinition,
     ObjectPropertyDefinition,
     OntologySchema,
+    element_iri,
 )
 from app.modules.validation.schemas import ElementKind, Severity, ValidationIssue
 
@@ -100,9 +101,13 @@ def validate_schema(schema: OntologySchema) -> list[ValidationIssue]:
     _check_descriptions(elements, out)
     _check_class_hierarchy(schema.classes, classes_by_id, out)
     _check_class_labels_and_aliases(schema.classes, out)
-    _check_object_properties(schema.object_properties, classes_by_id, out)
-    _check_datatype_properties(schema.datatype_properties, schema.classes, classes_by_id, out)
+    missing = Severity.ERROR if schema.require_domain_range else Severity.WARNING
+    _check_object_properties(schema.object_properties, classes_by_id, out, missing)
+    _check_datatype_properties(schema.datatype_properties, schema.classes, classes_by_id, out, missing)
     _check_orphans(schema, out)
+    _check_iris(schema, elements, out)
+    _check_semantics(schema, classes_by_id, out)
+    _check_extension_axioms(schema, elements, out)
 
     return sorted(
         out.issues,
@@ -374,11 +379,12 @@ def _check_domain(
     prop: ObjectPropertyDefinition | DatatypePropertyDefinition,
     classes_by_id: dict[str, ClassDefinition],
     out: _Collector,
+    missing: Severity = Severity.ERROR,
 ) -> None:
     if not prop.domain_id:
         out.add(
             "PROPERTY_DOMAIN_MISSING",
-            Severity.ERROR,
+            missing,
             f"{_noun(prop)} '{prop.label}' has no domain class.",
             _kind(prop),
             prop,
@@ -400,14 +406,15 @@ def _check_object_properties(
     props: list[ObjectPropertyDefinition],
     classes_by_id: dict[str, ClassDefinition],
     out: _Collector,
+    missing: Severity = Severity.ERROR,
 ) -> None:
     signatures: dict[tuple[str | None, str | None, str], list[ObjectPropertyDefinition]] = defaultdict(list)
     for prop in props:
-        _check_domain(prop, classes_by_id, out)
+        _check_domain(prop, classes_by_id, out, missing)
         if not prop.range_id:
             out.add(
                 "PROPERTY_RANGE_MISSING",
-                Severity.ERROR,
+                missing,
                 f"Relationship '{prop.label}' has no range class.",
                 ElementKind.OBJECT_PROPERTY,
                 prop,
@@ -457,10 +464,11 @@ def _check_datatype_properties(
     classes: list[ClassDefinition],
     classes_by_id: dict[str, ClassDefinition],
     out: _Collector,
+    missing: Severity = Severity.ERROR,
 ) -> None:
     by_domain_label: dict[tuple[str | None, str], list[DatatypePropertyDefinition]] = defaultdict(list)
     for prop in props:
-        _check_domain(prop, classes_by_id, out)
+        _check_domain(prop, classes_by_id, out, missing)
         by_domain_label[(prop.domain_id, prop.label.casefold())].append(prop)
 
     for group in by_domain_label.values():
@@ -518,4 +526,185 @@ def _check_orphans(schema: OntologySchema, out: _Collector) -> None:
                 f"Class '{cls.label}' has no relationships, attributes, parents or subclasses.",
                 ElementKind.CLASS,
                 cls,
+            )
+
+
+# ---------------------------------------------------------------------------------- IRIs (Phase 4)
+
+
+def _valid_iri(value: str) -> bool:
+    parts = urlsplit(value)
+    absolute = bool(parts.scheme) and (parts.scheme not in {"http", "https"} or bool(parts.netloc))
+    return absolute and not _IRI_FORBIDDEN.search(value)
+
+
+def _check_iris(schema: OntologySchema, elements: list[AnyElement], out: _Collector) -> None:
+    if schema.ontology_iri and not _valid_iri(schema.ontology_iri):
+        out.add(
+            "ONTOLOGY_IRI_INVALID",
+            Severity.ERROR,
+            f"Ontology IRI '{schema.ontology_iri}' is not a valid absolute IRI.",
+            ElementKind.ONTOLOGY,
+            field="ontology_iri",
+        )
+    for imported in schema.imports:
+        if not _valid_iri(imported):
+            out.add(
+                "IMPORT_IRI_INVALID",
+                Severity.ERROR,
+                f"Imported ontology '{imported}' is not a valid absolute IRI.",
+                ElementKind.ONTOLOGY,
+                field="imports",
+            )
+    seen_prefixes: set[str] = set()
+    for binding in schema.prefixes:
+        if binding.prefix == schema.prefix or binding.prefix in seen_prefixes:
+            out.add(
+                "PREFIX_DUPLICATE",
+                Severity.ERROR,
+                f"Prefix '{binding.prefix}' is bound more than once.",
+                ElementKind.ONTOLOGY,
+                field="prefixes",
+            )
+        if not _valid_iri(binding.namespace):
+            out.add(
+                "PREFIX_NAMESPACE_INVALID",
+                Severity.ERROR,
+                f"Prefix '{binding.prefix}' is bound to '{binding.namespace}', which is not a valid absolute IRI.",
+                ElementKind.ONTOLOGY,
+                field="prefixes",
+            )
+        seen_prefixes.add(binding.prefix)
+
+    by_iri: dict[str, list[AnyElement]] = defaultdict(list)
+    for element in elements:
+        by_iri[element_iri(schema.namespace, element)].append(element)
+        derived_from_bad_name = element.iri == f"{schema.namespace}{element.local_name}" and not LOCAL_NAME_RE.match(
+            element.local_name
+        )
+        if element.iri and not derived_from_bad_name and not _valid_iri(element.iri):
+            out.add(
+                "IRI_INVALID",
+                Severity.ERROR,
+                f"{_noun(element)} '{element.label}' has IRI '{element.iri}', which is not a valid absolute IRI.",
+                _kind(element),
+                element,
+                "iri",
+            )
+    for iri, group in by_iri.items():
+        if len(group) > 1:
+            for element in group:
+                out.add(
+                    "DUPLICATE_IRI",
+                    Severity.ERROR,
+                    f"{_noun(element)} '{element.label}' shares the IRI <{iri}> with {len(group) - 1} other "
+                    "element(s).",
+                    _kind(element),
+                    element,
+                    "iri",
+                    [e.id for e in group if e is not element],
+                )
+
+
+# ---------------------------------------------------------------------------------- OWL semantics
+
+
+def _check_semantics(schema: OntologySchema, classes_by_id: dict[str, ClassDefinition], out: _Collector) -> None:
+    object_ids = {p.id: p for p in schema.object_properties}
+    datatype_ids = {p.id: p for p in schema.datatype_properties}
+
+    def invalid(element: AnyElement, message: str, related: Iterable[str] = ()) -> None:
+        out.add("SEMANTIC_REFERENCE_INVALID", Severity.ERROR, message, _kind(element), element, "semantics", related)
+
+    for cls in schema.classes:
+        semantics = cls.semantics
+        for other in semantics.equivalent_ids:
+            if other not in classes_by_id or other == cls.id:
+                invalid(cls, f"Class '{cls.label}' declares an invalid equivalent class '{other}'.", [other])
+        for other in semantics.disjoint_ids:
+            if other not in classes_by_id or other == cls.id:
+                invalid(cls, f"Class '{cls.label}' declares an invalid disjoint class '{other}'.", [other])
+            elif other in _ancestors(cls.id, classes_by_id) or cls.id in _ancestors(other, classes_by_id):
+                out.add(
+                    "DISJOINT_WITH_RELATED_CLASS",
+                    Severity.WARNING,
+                    f"Class '{cls.label}' is disjoint with its super- or subclass '{classes_by_id[other].label}', "
+                    "so the subclass can have no members.",
+                    ElementKind.CLASS,
+                    cls,
+                    "semantics",
+                    [other],
+                )
+        for restriction in semantics.restrictions:
+            prop = object_ids.get(restriction.property_id) or datatype_ids.get(restriction.property_id)
+            if prop is None:
+                invalid(
+                    cls,
+                    f"A restriction on '{cls.label}' references unknown property '{restriction.property_id}'.",
+                    [restriction.property_id],
+                )
+                continue
+            is_object = restriction.property_id in object_ids
+            if restriction.class_id and (not is_object or restriction.class_id not in classes_by_id):
+                invalid(
+                    cls,
+                    f"A restriction on '{cls.label}' uses class '{restriction.class_id}' with '{prop.label}'; a class "
+                    "filler needs an existing class and a relationship.",
+                    [restriction.class_id],
+                )
+            if restriction.datatype and is_object:
+                invalid(cls, f"A restriction on '{cls.label}' uses a datatype with relationship '{prop.label}'.", [prop.id])
+            if restriction.kind == "has_value" and is_object and not _valid_iri(str(restriction.value)):
+                invalid(
+                    cls,
+                    f"A has-value restriction on '{cls.label}' needs an absolute IRI value for '{prop.label}'.",
+                    [prop.id],
+                )
+
+    for kind_ids, props in ((object_ids, schema.object_properties), (datatype_ids, schema.datatype_properties)):
+        for prop in props:
+            for parent in prop.semantics.parent_ids:
+                if parent not in kind_ids or parent == prop.id:
+                    invalid(prop, f"'{prop.label}' declares an invalid super-property '{parent}'.", [parent])
+            for other in prop.semantics.equivalent_ids:
+                if other not in kind_ids or other == prop.id:
+                    invalid(prop, f"'{prop.label}' declares an invalid equivalent property '{other}'.", [other])
+
+    for prop in schema.object_properties:
+        semantics = prop.semantics
+        if semantics.inverse_id and semantics.inverse_id not in object_ids:
+            invalid(
+                prop,
+                f"Relationship '{prop.label}' declares an unknown inverse '{semantics.inverse_id}'.",
+                [semantics.inverse_id],
+            )
+        characteristics = set(semantics.characteristics)
+        for a, b in (("symmetric", "asymmetric"), ("reflexive", "irreflexive")):
+            if {a, b} <= characteristics:
+                out.add(
+                    "CHARACTERISTICS_CONFLICT",
+                    Severity.WARNING,
+                    f"Relationship '{prop.label}' is both {a} and {b}; only an empty relation satisfies both.",
+                    ElementKind.OBJECT_PROPERTY,
+                    prop,
+                    "semantics",
+                )
+
+
+# ---------------------------------------------------------------------------------- preserved axioms
+
+
+def _check_extension_axioms(schema: OntologySchema, elements: list[AnyElement], out: _Collector) -> None:
+    element_ids = {e.id for e in elements}
+    for axiom in schema.extension_axioms:
+        missing = [a for a in axiom.anchor_ids if a not in element_ids]
+        if missing:
+            out.add(
+                "EXTENSION_AXIOM_ORPHANED",
+                Severity.ERROR,
+                f"Preserved axiom '{axiom.summary}' refers to deleted element(s) {', '.join(missing)}. Remove the "
+                "axiom or restore the element before publishing.",
+                ElementKind.ONTOLOGY,
+                field=f"extension_axioms.{axiom.id}",
+                related=missing,
             )

@@ -15,7 +15,7 @@ not assumed to be supported, and neither check proves factual correctness.
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
@@ -88,6 +88,9 @@ _DECIMAL = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)$")
 _GROUPED_DECIMAL = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 _TRUE = {"true", "yes", "1"}
 _FALSE = {"false", "no", "0"}
+_FLOAT = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$")
+_GYEAR = re.compile(r"^-?\d{4,}(Z|[+-]\d{2}:\d{2})?$")
+_BOUNDED_INTEGERS = {"int": (-(2**31), 2**31 - 1), "long": (-(2**63), 2**63 - 1)}
 
 
 def parse_literal(value: str, datatype: str) -> tuple[bool, str | None, str]:
@@ -129,6 +132,30 @@ def parse_literal(value: str, datatype: str) -> tuple[bool, str | None, str]:
         if parts.scheme and (parts.netloc or parts.scheme in {"urn", "mailto"}):
             return True, text, ""
         return False, None, f"'{text}' is not an absolute URI."
+    if datatype in _BOUNDED_INTEGERS:
+        low, high = _BOUNDED_INTEGERS[datatype]
+        if _INTEGER.match(text) and low <= int(text) <= high:
+            return True, str(int(text)), ""
+        return False, None, f"'{text}' is not a valid xsd:{datatype} ({low} to {high})."
+    if datatype in ("float", "double"):
+        candidate = text.replace(",", "") if _GROUPED_DECIMAL.match(text) else text
+        if candidate in ("INF", "-INF", "+INF", "NaN") or _FLOAT.match(candidate):
+            try:
+                number = float(candidate.replace("INF", "inf").replace("NaN", "nan"))
+            except ValueError:
+                number = None
+            if number is not None:
+                return True, repr(number) if candidate not in ("INF", "-INF", "+INF", "NaN") else candidate, ""
+        return False, None, f"'{text}' is not a valid xsd:{datatype}."
+    if datatype == "time":
+        try:
+            return True, time.fromisoformat(text).isoformat(), ""
+        except ValueError:
+            return False, None, f"'{text}' is not an ISO 8601 time (hh:mm:ss)."
+    if datatype == "gYear":
+        if _GYEAR.match(text):
+            return True, text, ""
+        return False, None, f"'{text}' is not a year (YYYY)."
     return False, None, f"Unsupported datatype '{datatype}'."
 
 
@@ -254,11 +281,11 @@ def assess_relationship_structure(
     subject_cls = subject.class_id if subject else None
     object_cls = obj.class_id if obj else None
     if prop is not None and subject_cls in view.classes and object_cls in view.classes:
-        domain_ok = view.is_a(subject_cls, prop.domain_id)
-        range_ok = view.is_a(object_cls, prop.range_id)
-        defined = f"{view.class_label(prop.domain_id, '?')} \u2192 {prop.label} \u2192 {view.class_label(prop.range_id, '?')}"
+        domain_ok = view.satisfies(subject_cls, prop.domain_id)
+        range_ok = view.satisfies(object_cls, prop.range_id)
+        defined = f"{view.constraint_label(prop.domain_id)} \u2192 {prop.label} \u2192 {view.constraint_label(prop.range_id)}"
         stated = f"{view.class_label(subject_cls)} \u2192 {prop.label} \u2192 {view.class_label(object_cls)}"
-        reversed_ok = view.is_a(object_cls, prop.domain_id) and view.is_a(subject_cls, prop.range_id)
+        reversed_ok = view.satisfies(object_cls, prop.domain_id) and view.satisfies(subject_cls, prop.range_id)
         if not (domain_ok and range_ok) and reversed_ok:
             result.structural.append(
                 Check(
@@ -274,7 +301,7 @@ def assess_relationship_structure(
                 domain_ok,
                 f"Subject class {view.class_label(subject_cls)} "
                 + ("satisfies" if domain_ok else "violates")
-                + f" the domain {view.class_label(prop.domain_id, '?')} of '{prop.label}'.",
+                + f" the domain {view.constraint_label(prop.domain_id)} of '{prop.label}'.",
             )
         )
         result.structural.append(
@@ -283,7 +310,7 @@ def assess_relationship_structure(
                 range_ok,
                 f"Object class {view.class_label(object_cls)} "
                 + ("satisfies" if range_ok else "violates")
-                + f" the range {view.class_label(prop.range_id, '?')} of '{prop.label}'.",
+                + f" the range {view.constraint_label(prop.range_id)} of '{prop.label}'.",
             )
         )
     return result
@@ -303,14 +330,14 @@ def assess_attribute_structure(fact: FactCandidate, subject: ResolvedEntity | No
     _reference_checks(result, "subject", subject, fact.subject_ref, view)
     subject_cls = subject.class_id if subject else None
     if prop is not None and subject_cls in view.classes:
-        domain_ok = view.is_a(subject_cls, prop.domain_id)
+        domain_ok = view.satisfies(subject_cls, prop.domain_id)
         result.structural.append(
             Check(
                 "domain",
                 domain_ok,
                 f"{view.class_label(subject_cls)} "
                 + ("is within" if domain_ok else "is outside")
-                + f" the domain {view.class_label(prop.domain_id, '?')} of '{prop.label}'.",
+                + f" the domain {view.constraint_label(prop.domain_id)} of '{prop.label}'.",
             )
         )
     if prop is not None:

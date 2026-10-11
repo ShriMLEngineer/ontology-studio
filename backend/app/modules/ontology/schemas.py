@@ -13,6 +13,7 @@ from app.modules.ontology.domain import (
     LocalName,
     ObjectPropertyDefinition,
     ParentIds,
+    PrefixBinding,
     XsdDatatype,
 )
 
@@ -33,6 +34,13 @@ class OntologyMetadata(_Strict):
     namespace: Namespace
     prefix: Prefix
     description: Description = ""
+    # Ontology header (Phase 4). Omitted fields are left unchanged on draft save.
+    ontology_iri: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] | None = None
+    prefixes: list[PrefixBinding] = Field(default_factory=list, max_length=100)
+    imports: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]] = Field(
+        default_factory=list, max_length=100
+    )
+    require_domain_range: bool = True
 
 
 class OntologyCreate(OntologyMetadata):
@@ -66,6 +74,10 @@ class OntologyRead(BaseModel):
     namespace: str
     prefix: str
     description: str
+    ontology_iri: str | None = None
+    prefixes: list[PrefixBinding] = Field(default_factory=list)
+    imports: list[str] = Field(default_factory=list)
+    require_domain_range: bool = True
     draft_revision: int
     stats: OntologyStats
     latest_version: PublishedVersionRef | None = None

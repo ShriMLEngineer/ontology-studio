@@ -2,6 +2,7 @@ import { apiUrl, http } from '@/lib/api/client'
 import type {
   ActivityEvent,
   ApplyResult,
+  ArtifactFormat,
   BuildComparison,
   BuildCreate,
   BuildDetail,
@@ -12,7 +13,9 @@ import type {
   DiscoveryRunCreate,
   DraftSaveRequest,
   DraftSaveResponse,
+  EntailmentReport,
   EntityDetail,
+  ExtensionAxiomRead,
   Evaluation,
   FactDetail,
   FactPage,
@@ -21,6 +24,7 @@ import type {
   GraphElementDetail,
   GraphNode,
   Health,
+  ImportResponse,
   LLMStatus,
   MappingIssue,
   MappingSpec,
@@ -28,6 +32,7 @@ import type {
   Ontology,
   OntologyDraft,
   OntologyGap,
+  OntologyImport,
   Project,
   ProjectCreate,
   ProposalDetail,
@@ -38,6 +43,7 @@ import type {
   PublishedVersionOption,
   PublishPreview,
   PublishRequest,
+  RdfFormat,
   SchemaDiff,
   SourceDocument,
   SourceMapping,
@@ -121,8 +127,40 @@ export const registryApi = {
     http.post<VersionSummary>(`/ontologies/${enc(ontologyId)}/versions`, body),
   compare: (ontologyId: string, base: string, target: string) =>
     http.get<SchemaDiff>(`/ontologies/${enc(ontologyId)}/compare?base=${enc(base)}&target=${enc(target)}`),
-  exportUrl: (ontologyId: string, versionId: string, format: 'turtle' | 'json') =>
+  exportUrl: (ontologyId: string, versionId: string, format: ArtifactFormat) =>
     apiUrl(`/ontologies/${enc(ontologyId)}/versions/${enc(versionId)}/export?format=${format}`),
+}
+
+export interface RdfImportOptions {
+  rdfFormat?: RdfFormat | ''
+  name?: string
+  namespace?: string
+  prefix?: string
+  ontologyId?: string
+  importedBy: string
+}
+
+export const semanticsApi = {
+  draftRdf: (ontologyId: string, format: RdfFormat = 'turtle') =>
+    http.text(`/ontologies/${enc(ontologyId)}/rdf?format=${format}`),
+  draftRdfUrl: (ontologyId: string, format: RdfFormat) =>
+    apiUrl(`/ontologies/${enc(ontologyId)}/rdf?format=${format}&download=true`),
+  axioms: (ontologyId: string) => http.get<ExtensionAxiomRead[]>(`/ontologies/${enc(ontologyId)}/axioms`),
+  deleteAxiom: (ontologyId: string, axiomId: string, actor: string) =>
+    http.delete(`/ontologies/${enc(ontologyId)}/axioms/${enc(axiomId)}?deleted_by=${enc(actor)}`),
+  imports: (ontologyId: string) => http.get<OntologyImport[]>(`/ontologies/${enc(ontologyId)}/imports`),
+  entailments: (ontologyId: string) => http.get<EntailmentReport>(`/ontologies/${enc(ontologyId)}/entailments`),
+  importRdf: (projectId: string, file: File, options: RdfImportOptions) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('imported_by', options.importedBy)
+    if (options.rdfFormat) form.append('rdf_format', options.rdfFormat)
+    if (options.name) form.append('name', options.name)
+    if (options.namespace) form.append('namespace', options.namespace)
+    if (options.prefix) form.append('prefix', options.prefix)
+    if (options.ontologyId) form.append('ontology_id', options.ontologyId)
+    return http.upload<ImportResponse>(`/projects/${enc(projectId)}/ontologies/import`, form)
+  },
 }
 
 function query(params: Record<string, string | string[] | number | undefined | null>): string {

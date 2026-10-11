@@ -80,10 +80,13 @@ def test_user_journey_changes_persist_across_restart(
 
     assert reloaded["draft_revision"] == start_revision + 1
     by_id = {c["id"]: c for c in reloaded["classes"]}
-    assert by_id["cls-inventory-lot"] == new_class
+    # Phase 4 adds the persisted IRI and OWL semantics to every element (additive fields).
+    assert {k: by_id["cls-inventory-lot"][k] for k in new_class} == new_class
+    assert by_id["cls-inventory-lot"]["iri"] == "https://example.com/ontology/supply-chain#InventoryLot"
     assert by_id[supplier["id"]]["aliases"] == ["Vendor", "Seller"]
     assert by_id[supplier["id"]]["description"] == "An approved organization that provides products."
-    assert relationship in reloaded["object_properties"]
+    saved_rel = next(p for p in reloaded["object_properties"] if p["id"] == relationship["id"])
+    assert {k: saved_rel[k] for k in relationship} == relationship
     assert reloaded["layout"]["positions"]["cls-inventory-lot"] == {"x": 1200.0, "y": 700.0}
     assert [c["id"] for c in reloaded["classes"]][-1] == "cls-inventory-lot", "order is preserved"
 

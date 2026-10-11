@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, Field, ConfigDict, StringConstraints
 
 from app.modules.registry.diff import SchemaDiff
 from app.modules.registry.snapshot import OntologySnapshot
@@ -33,6 +33,12 @@ class VersionSummary(BaseModel):
     published_by: str
     published_at: datetime
     artifacts: list[VersionArtifactRead]
+    snapshot_format: str = "ols.ontology-snapshot/1"
+    package_format: str = Field(
+        default="ols-semantic/1 (legacy)",
+        description="ols-semantic/2 packages carry OWL in four RDF syntaxes and a manifest; legacy versions "
+        "stored Turtle and JSON only (other syntaxes are derived on export, never stored).",
+    )
 
 
 class VersionDetail(VersionSummary):

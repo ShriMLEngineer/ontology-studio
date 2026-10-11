@@ -6,6 +6,12 @@ export type XsdDatatype =
   | 'date'
   | 'dateTime'
   | 'anyURI'
+  | 'float'
+  | 'double'
+  | 'int'
+  | 'long'
+  | 'time'
+  | 'gYear'
 
 export const XSD_DATATYPES: readonly XsdDatatype[] = [
   'string',
@@ -15,6 +21,12 @@ export const XSD_DATATYPES: readonly XsdDatatype[] = [
   'date',
   'dateTime',
   'anyURI',
+  'float',
+  'double',
+  'int',
+  'long',
+  'time',
+  'gYear',
 ]
 
 export interface Health {
@@ -35,11 +47,21 @@ export interface Project {
   updated_at: string
 }
 
+export interface PrefixBinding {
+  prefix: string
+  namespace: string
+}
+
 export interface OntologyMetadata {
   name: string
   namespace: string
   prefix: string
   description: string
+  /** Phase 4 ontology header. Omitted fields are left unchanged by the backend on save. */
+  ontology_iri?: string | null
+  prefixes?: PrefixBinding[]
+  imports?: string[]
+  require_domain_range?: boolean
 }
 
 export interface ProjectCreate {
@@ -65,11 +87,73 @@ export interface PublishedVersionRef {
 export interface Ontology extends OntologyMetadata {
   id: string
   project_id: string
+  ontology_iri: string | null
+  prefixes: PrefixBinding[]
+  imports: string[]
+  require_domain_range: boolean
   draft_revision: number
   stats: OntologyStats
   latest_version: PublishedVersionRef | null
   created_at: string
   updated_at: string
+}
+
+// ------------------------------------------------------------------ OWL semantics (Phase 4)
+
+export type Characteristic =
+  | 'functional'
+  | 'inverse_functional'
+  | 'transitive'
+  | 'symmetric'
+  | 'asymmetric'
+  | 'reflexive'
+  | 'irreflexive'
+
+export const CHARACTERISTICS: readonly Characteristic[] = [
+  'functional',
+  'inverse_functional',
+  'transitive',
+  'symmetric',
+  'asymmetric',
+  'reflexive',
+  'irreflexive',
+]
+
+export type RestrictionKind = 'some' | 'all' | 'has_value' | 'min' | 'max' | 'exact'
+
+export interface Restriction {
+  property_id: string
+  kind: RestrictionKind
+  class_id?: string | null
+  datatype?: XsdDatatype | null
+  value?: string | null
+  cardinality?: number | null
+}
+
+export type DescriptionPredicate = 'skos:definition' | 'rdfs:comment'
+
+interface BaseSemantics {
+  deprecated?: boolean
+  equivalent_ids?: string[]
+  annotation_language?: string | null
+  description_predicate?: DescriptionPredicate
+}
+
+export interface ClassSemantics extends BaseSemantics {
+  disjoint_ids?: string[]
+  restrictions?: Restriction[]
+}
+
+export interface ObjectPropertySemantics extends BaseSemantics {
+  parent_ids?: string[]
+  inverse_id?: string | null
+  characteristics?: Characteristic[]
+}
+
+export interface DatatypePropertySemantics extends BaseSemantics {
+  parent_ids?: string[]
+  functional?: boolean
+  range_declared?: boolean
 }
 
 export interface ClassDefinition {
@@ -79,6 +163,9 @@ export interface ClassDefinition {
   description: string
   aliases: string[]
   parent_ids: string[]
+  /** Persisted IRI; locked once the element is published. Omit to let the server mint it. */
+  iri?: string | null
+  semantics?: ClassSemantics
 }
 
 export interface ObjectPropertyDefinition {
@@ -89,6 +176,8 @@ export interface ObjectPropertyDefinition {
   aliases: string[]
   domain_id: string | null
   range_id: string | null
+  iri?: string | null
+  semantics?: ObjectPropertySemantics
 }
 
 export interface DatatypePropertyDefinition {
@@ -101,6 +190,8 @@ export interface DatatypePropertyDefinition {
   datatype: XsdDatatype
   required: boolean
   multi_valued: boolean
+  iri?: string | null
+  semantics?: DatatypePropertySemantics
 }
 
 export interface Position {
@@ -381,8 +472,10 @@ export interface ApplyResult {
 
 // ----------------------------------------------------------------------------- Phase 2: registry
 
+export type ArtifactFormat = 'json' | 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples' | 'manifest'
+
 export interface VersionArtifact {
-  format: 'json' | 'turtle'
+  format: ArtifactFormat
   filename: string
   media_type: string
   sha256: string
@@ -406,14 +499,18 @@ export interface VersionSummary {
   published_by: string
   published_at: string
   artifacts: VersionArtifact[]
+  snapshot_format: 'ols.ontology-snapshot/1' | 'ols.ontology-snapshot/2'
+  package_format: string
 }
 
 export interface VersionDetail extends VersionSummary {
   snapshot: {
-    metadata: { name: string; namespace: string; prefix: string; description: string }
+    format: 'ols.ontology-snapshot/1' | 'ols.ontology-snapshot/2'
+    metadata: OntologyMetadata
     classes: ClassDefinition[]
     object_properties: ObjectPropertyDefinition[]
     datatype_properties: DatatypePropertyDefinition[]
+    extension_axioms?: ExtensionAxiom[]
   }
 }
 
@@ -442,6 +539,8 @@ export interface SchemaDiff {
   breaking_changes: string[]
   suggested_bump: VersionBump | 'none'
   has_changes: boolean
+  axiom_changes?: { axiom_id: string; kind: string; summary: string; change: 'added' | 'removed' }[]
+  notes?: string[]
 }
 
 export interface PublishPreview {
@@ -917,4 +1016,79 @@ export interface BuildComparison {
   nodes: ElementDiff
   edges: ElementDiff
   metrics: { key: string; label: string; unit: string; base: number | null; target: number | null }[]
+}
+
+// ------------------------------------------------------------------ semantics (Phase 4)
+
+export type RdfFormat = 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples'
+
+export interface ExtensionAxiom {
+  id: string
+  scope: 'ontology' | 'shapes'
+  kind: string
+  summary: string
+  ntriples: string
+  anchor_ids: string[]
+}
+
+export interface ExtensionAxiomRead extends ExtensionAxiom {
+  missing_anchor_ids: string[]
+  orphaned: boolean
+  import_id: string | null
+  created_at: string
+}
+
+export interface ImportReport {
+  rdf_format: RdfFormat
+  source_triples: number
+  consumed_triples: number
+  preserved_triples: number
+  superseded_triples: number
+  added_triples: number
+  classes: number
+  object_properties: number
+  datatype_properties: number
+  preserved_axioms: number
+  preserved_by_kind: Record<string, number>
+  superseded: string[]
+  added: string[]
+  warnings: string[]
+  lossless: boolean
+}
+
+export interface OntologyImport {
+  id: string
+  project_id: string
+  ontology_id: string
+  filename: string
+  rdf_format: RdfFormat
+  sha256: string
+  imported_by: string
+  created_at: string
+  report: ImportReport
+}
+
+export interface ImportResponse {
+  ontology: Ontology
+  import_record: OntologyImport
+}
+
+export interface Entailment {
+  category: string
+  subject: string
+  predicate: string
+  object: string
+  display: string
+}
+
+export interface EntailmentReport {
+  engine: string
+  informational: boolean
+  asserted_triples: number
+  inferred_triples: number
+  entailments: Entailment[]
+  by_category: Record<string, number>
+  inconsistencies: string[]
+  truncated: boolean
+  duration_ms: number
 }

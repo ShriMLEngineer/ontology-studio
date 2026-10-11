@@ -16,6 +16,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
@@ -65,15 +66,22 @@ from app.modules.ontology.schemas import (
     OntologyUpdate,
 )
 from app.modules.projects.repository import ProjectRepository
+from app.modules.registry.models import OntologyVersion
 
 
 def _db_value(value: Any) -> Any:
     # StrEnum values are persisted as plain strings; lists are copied so JSON changes are detected.
+    # Nested models (OWL semantics) are stored compactly so default semantics == legacy "{}".
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_defaults=True)
     if isinstance(value, list):
         return list(value)
     if hasattr(value, "value"):
         return value.value
     return value
+
+
+HEADER_FIELDS = ("ontology_iri", "prefixes", "imports", "require_domain_range")
 
 
 class OntologyService:
@@ -106,6 +114,10 @@ class OntologyService:
             namespace=ontology.namespace,
             prefix=ontology.prefix,
             description=ontology.description,
+            ontology_iri=ontology.ontology_iri,
+            prefixes=ontology.prefixes or [],
+            imports=ontology.imports or [],
+            require_domain_range=ontology.require_domain_range,
             draft_revision=ontology.draft_revision,
             stats=stats,
             latest_version=self.repo.latest_versions([ontology.id]).get(ontology.id),
@@ -201,6 +213,10 @@ class OntologyService:
                 namespace=data.namespace,
                 prefix=data.prefix,
                 description=data.description,
+                ontology_iri=data.ontology_iri or None,
+                prefixes=[p.model_dump() for p in data.prefixes],
+                imports=list(data.imports),
+                require_domain_range=data.require_domain_range,
                 draft_revision=1,
             )
         )
@@ -227,8 +243,11 @@ class OntologyService:
                 code="ONTOLOGY_NAME_TAKEN",
             )
         if changed:
+            old_namespace = ontology.namespace
             for key, value in changed.items():
                 setattr(ontology, key, value)
+            if "namespace" in changed:
+                self._follow_namespace(ontology, old_namespace)
             self._touch(ontology)
             self._activity(
                 ontology,
@@ -298,7 +317,13 @@ class OntologyService:
         self._ensure_unique_ids(request)
 
         changes = DraftChangeSummary()
-        metadata = request.metadata.model_dump()
+        old_namespace = ontology.namespace
+        header_sent = request.metadata.model_fields_set & set(HEADER_FIELDS)
+        metadata = request.metadata.model_dump(
+            mode="json", exclude={f for f in HEADER_FIELDS if f not in header_sent}
+        )
+        if "ontology_iri" in metadata:
+            metadata["ontology_iri"] = metadata["ontology_iri"] or None
         changed_metadata = {k: v for k, v in metadata.items() if getattr(ontology, k) != v}
         if "name" in changed_metadata and self.repo.name_taken(
             ontology.project_id, changed_metadata["name"], exclude_id=ontology.id
@@ -311,23 +336,7 @@ class OntologyService:
             setattr(ontology, key, value)
         changes.metadata_changed = bool(changed_metadata)
 
-        changes.classes = self._sync_elements(
-            OntologyClassRecord, ontology.id, self.repo.classes(ontology.id), request.classes, CLASS_FIELDS
-        )
-        changes.object_properties = self._sync_elements(
-            ObjectPropertyRecord,
-            ontology.id,
-            self.repo.object_properties(ontology.id),
-            request.object_properties,
-            OBJECT_PROPERTY_FIELDS,
-        )
-        changes.datatype_properties = self._sync_elements(
-            DatatypePropertyRecord,
-            ontology.id,
-            self.repo.datatype_properties(ontology.id),
-            request.datatype_properties,
-            DATATYPE_PROPERTY_FIELDS,
-        )
+        self._sync_schema(ontology, old_namespace, request.classes, request.object_properties, request.datatype_properties, changes)
 
         class_ids = {c.id for c in request.classes}
         positions = {
@@ -369,22 +378,8 @@ class OntologyService:
         the existing diagram; positions of removed classes are pruned.
         """
         changes = DraftChangeSummary()
-        changes.classes = self._sync_elements(
-            OntologyClassRecord, ontology.id, self.repo.classes(ontology.id), schema.classes, CLASS_FIELDS
-        )
-        changes.object_properties = self._sync_elements(
-            ObjectPropertyRecord,
-            ontology.id,
-            self.repo.object_properties(ontology.id),
-            schema.object_properties,
-            OBJECT_PROPERTY_FIELDS,
-        )
-        changes.datatype_properties = self._sync_elements(
-            DatatypePropertyRecord,
-            ontology.id,
-            self.repo.datatype_properties(ontology.id),
-            schema.datatype_properties,
-            DATATYPE_PROPERTY_FIELDS,
+        self._sync_schema(
+            ontology, ontology.namespace, schema.classes, schema.object_properties, schema.datatype_properties, changes
         )
 
         layout = self.repo.get_layout(ontology.id)
@@ -409,6 +404,97 @@ class OntologyService:
                 {"changes": changes.model_dump(), **(details or {})},
             )
         return changes
+
+    def locked_iris(self, ontology_id: str) -> dict[str, str]:
+        """IRIs of elements in the latest published version: these can no longer change."""
+        version = self.session.scalars(
+            select(OntologyVersion)
+            .where(OntologyVersion.ontology_id == ontology_id)
+            .order_by(OntologyVersion.sequence.desc())
+        ).first()
+        if version is None:
+            return {}
+        snapshot = version.snapshot
+        namespace = snapshot["metadata"]["namespace"]
+        return {
+            e["id"]: e.get("iri") or f"{namespace}{e['local_name']}"
+            for key in ("classes", "object_properties", "datatype_properties")
+            for e in snapshot.get(key, [])
+        }
+
+    def _assign_iris(
+        self,
+        namespace: str,
+        old_namespace: str,
+        elements: Sequence[Any],
+        existing: Sequence[Any],
+        locked: dict[str, str],
+    ) -> list[Any]:
+        """Mint, follow or lock element IRIs.
+
+        * Published elements keep their IRI (``IRI_LOCKED`` if a client changes it).
+        * Unpublished elements whose IRI is managed automatically follow namespace + local name.
+        * Explicit IRIs (for example imported ones) are kept; a client that omits the IRI of an
+          existing element keeps the stored IRI.
+        """
+        by_id = {record.id: record for record in existing}
+        result = []
+        for element in elements:
+            record = by_id.get(element.id)
+            if element.id in locked:
+                # A draft IRI that already diverged before Phase 4 (namespace changed after the last
+                # publication) is kept rather than silently rewritten; the publish diff flags it.
+                stored = record.iri if record is not None else None
+                iri = element.iri or stored or locked[element.id]
+                if iri not in (locked[element.id], stored):
+                    raise BusinessRuleError(
+                        f"The IRI of '{element.label}' is locked because the element is published "
+                        f"({locked[element.id]}).",
+                        code="IRI_LOCKED",
+                        details={"element_id": element.id, "iri": locked[element.id]},
+                    )
+            else:
+                if record is None:
+                    iri = element.iri or f"{namespace}{element.local_name}"
+                else:
+                    stored = record.iri or f"{old_namespace}{record.local_name}"
+                    requested = element.iri or stored
+                    automatic = requested == stored and stored == f"{old_namespace}{record.local_name}"
+                    iri = f"{namespace}{element.local_name}" if automatic else requested
+            result.append(element if element.iri == iri else element.model_copy(update={"iri": iri}))
+        return result
+
+    def _follow_namespace(self, ontology: Ontology, old_namespace: str) -> None:
+        """After a namespace change, move automatically managed, unpublished IRIs to the new namespace."""
+        locked = self.locked_iris(ontology.id)
+        for records in (
+            self.repo.classes(ontology.id),
+            self.repo.object_properties(ontology.id),
+            self.repo.datatype_properties(ontology.id),
+        ):
+            for record in records:
+                if record.id not in locked and record.iri in (None, f"{old_namespace}{record.local_name}"):
+                    record.iri = f"{ontology.namespace}{record.local_name}"
+
+    def _sync_schema(
+        self,
+        ontology: Ontology,
+        old_namespace: str,
+        classes: Sequence[Any],
+        object_properties: Sequence[Any],
+        datatype_properties: Sequence[Any],
+        changes: DraftChangeSummary,
+    ) -> None:
+        locked = self.locked_iris(ontology.id)
+        for attr, model, existing, incoming, fields in (
+            ("classes", OntologyClassRecord, self.repo.classes(ontology.id), classes, CLASS_FIELDS),
+            ("object_properties", ObjectPropertyRecord, self.repo.object_properties(ontology.id), object_properties,
+             OBJECT_PROPERTY_FIELDS),
+            ("datatype_properties", DatatypePropertyRecord, self.repo.datatype_properties(ontology.id),
+             datatype_properties, DATATYPE_PROPERTY_FIELDS),
+        ):
+            assigned = self._assign_iris(ontology.namespace, old_namespace, incoming, existing, locked)
+            setattr(changes, attr, self._sync_elements(model, ontology.id, existing, assigned, fields))
 
     def _ensure_unique_ids(self, request: DraftSaveRequest) -> None:
         seen: set[str] = set()
@@ -437,6 +523,9 @@ class OntologyService:
         for index, element in enumerate(incoming):
             values = {f: _db_value(getattr(element, f)) for f in fields}
             record = by_id.pop(element.id, None)  # type: ignore[attr-defined]
+            if record is not None and "semantics" in values and "semantics" not in element.model_fields_set:
+                # Clients unaware of OWL semantics (Phase 1-3 payloads) must not erase them.
+                values["semantics"] = record.semantics
             if record is None:
                 self.repo.add_element(
                     model(ontology_id=ontology_id, id=element.id, sort_order=index, **values)  # type: ignore[attr-defined]
@@ -480,6 +569,7 @@ class OntologyService:
         definition = ClassDefinition(
             id=element_id,
             local_name=local_name,
+            iri=f"{ontology.namespace}{local_name}",
             label=data.label,
             description=data.description,
             aliases=data.aliases,
@@ -539,6 +629,7 @@ class OntologyService:
             self.repo.delete_element(prop)
         for child in children:
             child.parent_ids = [pid for pid in child.parent_ids if pid != class_id]
+        self._strip_semantic_references(ontology_id, {class_id, *(p.id for p in (*object_props, *datatype_props))})
         layout = self.repo.get_layout(ontology_id)
         if class_id in (layout.positions or {}):
             layout.positions = {k: v for k, v in layout.positions.items() if k != class_id}
@@ -590,6 +681,7 @@ class OntologyService:
         definition = ObjectPropertyDefinition(
             id=element_id,
             local_name=local_name,
+            iri=f"{ontology.namespace}{local_name}",
             label=data.label,
             description=data.description,
             aliases=data.aliases,
@@ -635,6 +727,7 @@ class OntologyService:
         ontology = self._require(ontology_id)
         record = self._require_object_property(ontology_id, prop_id)
         self.repo.delete_element(record)
+        self._strip_semantic_references(ontology_id, {prop_id})
         self._touch(ontology)
         self._activity(
             ontology, "ontology.relationship_deleted", f"Relationship '{record.label}' deleted"
@@ -671,6 +764,7 @@ class OntologyService:
         definition = DatatypePropertyDefinition(
             id=element_id,
             local_name=local_name,
+            iri=f"{ontology.namespace}{local_name}",
             label=data.label,
             description=data.description,
             aliases=data.aliases,
@@ -717,11 +811,46 @@ class OntologyService:
         ontology = self._require(ontology_id)
         record = self._require_datatype_property(ontology_id, prop_id)
         self.repo.delete_element(record)
+        self._strip_semantic_references(ontology_id, {prop_id})
         self._touch(ontology)
         self._activity(ontology, "ontology.attribute_deleted", f"Attribute '{record.label}' deleted")
         self.session.commit()
 
     # ------------------------------------------------------------------------------ shared
+
+    def _strip_semantic_references(self, ontology_id: str, removed: set[str]) -> None:
+        """Drop OWL semantics (equivalence, disjointness, restrictions, inverse, super-properties) that
+        refer to deleted elements, mirroring the cascade applied to domains, ranges and parents."""
+        for records in (
+            self.repo.classes(ontology_id),
+            self.repo.object_properties(ontology_id),
+            self.repo.datatype_properties(ontology_id),
+        ):
+            for record in records:
+                if record.id in removed or not record.semantics:
+                    continue
+                semantics = dict(record.semantics)
+                for key in ("equivalent_ids", "disjoint_ids", "parent_ids"):
+                    if key in semantics:
+                        kept = [i for i in semantics[key] if i not in removed]
+                        if kept:
+                            semantics[key] = kept
+                        else:
+                            del semantics[key]
+                if semantics.get("inverse_id") in removed:
+                    del semantics["inverse_id"]
+                if "restrictions" in semantics:
+                    kept_restrictions = [
+                        r
+                        for r in semantics["restrictions"]
+                        if r.get("property_id") not in removed and r.get("class_id") not in removed
+                    ]
+                    if kept_restrictions:
+                        semantics["restrictions"] = kept_restrictions
+                    else:
+                        del semantics["restrictions"]
+                if semantics != record.semantics:
+                    record.semantics = semantics
 
     def _apply_update(
         self,
@@ -734,6 +863,12 @@ class OntologyService:
     ) -> Any:
         values = {k: _db_value(v) for k, v in requested.items()}
         changed = {k: v for k, v in values.items() if getattr(record, k) != v}
+        if (
+            "local_name" in changed
+            and record.id not in self.locked_iris(ontology.id)
+            and record.iri in (None, f"{ontology.namespace}{record.local_name}")
+        ):
+            changed["iri"] = f"{ontology.namespace}{changed['local_name']}"
         if changed:
             for key, value in changed.items():
                 setattr(record, key, value)

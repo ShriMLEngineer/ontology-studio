@@ -1,8 +1,11 @@
 import type {
   ClassDefinition,
+  ClassSemantics,
   DatatypePropertyDefinition,
+  DatatypePropertySemantics,
   DiagramLayout,
   ObjectPropertyDefinition,
+  ObjectPropertySemantics,
   OntologyDraft,
   OntologyMetadata,
   Position,
@@ -39,9 +42,9 @@ export type DraftAction =
   | { type: 'deleteDatatypeProperty'; id: string }
 
 export function toDoc(draft: OntologyDraft): DraftDoc {
-  const { name, namespace, prefix, description } = draft.ontology
+  const { name, namespace, prefix, description, ontology_iri, prefixes, imports, require_domain_range } = draft.ontology
   return {
-    metadata: { name, namespace, prefix, description },
+    metadata: { name, namespace, prefix, description, ontology_iri, prefixes, imports, require_domain_range },
     classes: draft.classes,
     object_properties: draft.object_properties,
     datatype_properties: draft.datatype_properties,
@@ -77,7 +80,7 @@ export function applyDraftAction(doc: DraftDoc, action: DraftAction): DraftDoc {
       // Same cascade semantics as the backend: remove dependent properties, detach subclasses.
       const { [action.id]: _removed, ...positions } = doc.layout.positions
       void _removed
-      return {
+      const next: DraftDoc = {
         ...doc,
         classes: doc.classes
           .filter((c) => c.id !== action.id)
@@ -88,6 +91,12 @@ export function applyDraftAction(doc: DraftDoc, action: DraftAction): DraftDoc {
         datatype_properties: doc.datatype_properties.filter((p) => p.domain_id !== action.id),
         layout: { positions },
       }
+      const removed = new Set([
+        action.id,
+        ...doc.object_properties.filter((p) => p.domain_id === action.id || p.range_id === action.id).map((p) => p.id),
+        ...doc.datatype_properties.filter((p) => p.domain_id === action.id).map((p) => p.id),
+      ])
+      return stripSemanticReferences(next, removed)
     }
     case 'moveClasses': {
       const positions = { ...doc.layout.positions }
@@ -99,13 +108,47 @@ export function applyDraftAction(doc: DraftDoc, action: DraftAction): DraftDoc {
     case 'updateObjectProperty':
       return { ...doc, object_properties: patchById(doc.object_properties, action.id, action.patch) }
     case 'deleteObjectProperty':
-      return { ...doc, object_properties: doc.object_properties.filter((p) => p.id !== action.id) }
+      return stripSemanticReferences(
+        { ...doc, object_properties: doc.object_properties.filter((p) => p.id !== action.id) },
+        new Set([action.id]),
+      )
     case 'addDatatypeProperty':
       return { ...doc, datatype_properties: [...doc.datatype_properties, action.value] }
     case 'updateDatatypeProperty':
       return { ...doc, datatype_properties: patchById(doc.datatype_properties, action.id, action.patch) }
     case 'deleteDatatypeProperty':
-      return { ...doc, datatype_properties: doc.datatype_properties.filter((p) => p.id !== action.id) }
+      return stripSemanticReferences(
+        { ...doc, datatype_properties: doc.datatype_properties.filter((p) => p.id !== action.id) },
+        new Set([action.id]),
+      )
+  }
+}
+
+type AnySemantics = ClassSemantics & ObjectPropertySemantics & DatatypePropertySemantics
+
+function stripSemantics<T extends { semantics?: object }>(element: T, removed: Set<string>): T {
+  const semantics = element.semantics as AnySemantics | undefined
+  if (!semantics) return element
+  const next: AnySemantics = { ...semantics }
+  for (const key of ['equivalent_ids', 'disjoint_ids', 'parent_ids'] as const) {
+    if (next[key]) next[key] = next[key]!.filter((id) => !removed.has(id))
+  }
+  if (next.inverse_id && removed.has(next.inverse_id)) next.inverse_id = null
+  if (next.restrictions) {
+    next.restrictions = next.restrictions.filter(
+      (r) => !removed.has(r.property_id) && !(r.class_id && removed.has(r.class_id)),
+    )
+  }
+  return JSON.stringify(next) === JSON.stringify(semantics) ? element : { ...element, semantics: next }
+}
+
+/** Mirror of the backend cascade: drop OWL semantics that refer to deleted elements. */
+export function stripSemanticReferences(doc: DraftDoc, removed: Set<string>): DraftDoc {
+  return {
+    ...doc,
+    classes: doc.classes.map((c) => stripSemantics(c, removed)),
+    object_properties: doc.object_properties.map((p) => stripSemantics(p, removed)),
+    datatype_properties: doc.datatype_properties.map((p) => stripSemantics(p, removed)),
   }
 }
 

@@ -69,7 +69,34 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T
 }
 
+/** GET a non-JSON body (for example Turtle); errors use the same envelope handling as JSON calls. */
+async function requestText(path: string): Promise<string> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}${path}`)
+  } catch {
+    throw new ApiError(0, 'NETWORK_ERROR', 'Cannot reach the API server. Check that the backend is running.')
+  }
+  const text = await response.text()
+  if (!response.ok) {
+    let envelope: ErrorEnvelope = {}
+    try {
+      envelope = JSON.parse(text) as ErrorEnvelope
+    } catch {
+      envelope = {}
+    }
+    throw new ApiError(
+      response.status,
+      envelope.error?.code ?? `HTTP_${response.status}`,
+      envelope.error?.message ?? `Request failed with HTTP ${response.status}.`,
+      envelope.error?.details ?? {},
+    )
+  }
+  return text
+}
+
 export const http = {
+  text: (path: string) => requestText(path),
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
   put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),

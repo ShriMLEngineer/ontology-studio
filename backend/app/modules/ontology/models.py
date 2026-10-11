@@ -11,7 +11,7 @@ publication is gated on a clean validation.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.ids import new_id, utcnow
@@ -31,6 +31,11 @@ class Ontology(TimestampMixin, Base):
     prefix: Mapped[str] = mapped_column(String(40), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     draft_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # Ontology header (Phase 4). ``ontology_iri`` None means "derived from the namespace".
+    ontology_iri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    prefixes: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    imports: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
+    require_domain_range: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true(), nullable=False)
 
 
 class _OntologyElementColumns(TimestampMixin):
@@ -43,6 +48,8 @@ class _OntologyElementColumns(TimestampMixin):
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    iri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    semantics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}", nullable=False)
 
 
 class OntologyClassRecord(_OntologyElementColumns, Base):
@@ -79,3 +86,46 @@ class OntologyDiagramLayout(Base):
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+
+class OntologyExtensionAxiomRecord(Base):
+    """Triples outside the OLS Semantic Profile, preserved verbatim with their blank-node closure.
+
+    The whole-draft save never touches this table; an axiom whose anchor element was deleted is
+    reported as orphaned and blocks publication until an SME resolves it.
+    """
+
+    __tablename__ = "ontology_extension_axioms"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ontology_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ontologies.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(16), default="ontology", nullable=False)
+    kind: Mapped[str] = mapped_column(String(120), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    ntriples: Mapped[str] = mapped_column(Text, nullable=False)
+    anchor_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    import_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+
+
+class OntologyImportRecord(Base):
+    """An RDF file imported into an ontology, with the classification report."""
+
+    __tablename__ = "ontology_imports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    ontology_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ontologies.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    rdf_format: Mapped[str] = mapped_column(String(20), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    imported_by: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)

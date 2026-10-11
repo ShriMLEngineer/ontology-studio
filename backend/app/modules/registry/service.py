@@ -1,5 +1,6 @@
 """Ontology registry: immutable publication, version history, comparison and export."""
 
+import hashlib
 import json
 from typing import Literal
 
@@ -15,7 +16,8 @@ from app.modules.ontology.service import OntologyService
 from app.modules.registry.artifacts import ArtifactIntegrityError, OntologyArtifactRepository, StoredArtifact
 from app.modules.registry.diff import SchemaDiff, bump_version, diff_snapshots, parse_semver
 from app.modules.registry.models import OntologyVersion
-from app.modules.registry.rdf import to_turtle
+from app.modules.semantics.graphs import FORMATS, parse_rdf, serialize
+from app.modules.semantics.owl import ontology_iri_of, snapshot_to_owl
 from app.modules.registry.schemas import (
     PublishPreview,
     PublishRequest,
@@ -24,13 +26,22 @@ from app.modules.registry.schemas import (
     VersionDetail,
     VersionSummary,
 )
-from app.modules.registry.snapshot import OntologySnapshot, SnapshotMetadata, build_snapshot, content_hash
+from app.modules.registry.snapshot import (
+    OntologySnapshot,
+    build_snapshot,
+    content_hash,
+    metadata_from_ontology,
+)
 from app.modules.validation.rules import validate_schema
 from app.modules.validation.schemas import Severity
 from app.modules.validation.service import ValidationService
 
-ExportFormat = Literal["turtle", "json"]
+ExportFormat = Literal["turtle", "json", "rdfxml", "jsonld", "ntriples", "manifest"]
+RDF_EXPORT_FORMATS = ("turtle", "rdfxml", "jsonld", "ntriples")
 DRAFT = "draft"
+PACKAGE_FORMAT = "ols-semantic/2"
+SEMANTIC_PROFILE = "ols-semantic-profile/1"
+GENERATOR = "Ontology Lifecycle Studio (Phase 4)"
 
 
 class ArtifactUnavailableError(DomainError):
@@ -48,10 +59,7 @@ class RegistryService:
 
     def _draft_snapshot(self, ontology_id: str) -> tuple[Ontology, OntologySnapshot]:
         ontology, schema = self.ontologies.get_schema(ontology_id)
-        metadata = SnapshotMetadata(
-            name=ontology.name, namespace=ontology.namespace, prefix=ontology.prefix, description=ontology.description
-        )
-        return ontology, build_snapshot(metadata, schema)
+        return ontology, build_snapshot(metadata_from_ontology(ontology), schema)
 
     def _versions(self, ontology_id: str) -> list[OntologyVersion]:
         stmt = (
@@ -95,6 +103,8 @@ class RegistryService:
                 )
                 for a in version.artifacts.values()
             ],
+            snapshot_format=version.snapshot.get("format", "ols.ontology-snapshot/1"),
+            package_format=PACKAGE_FORMAT if "manifest" in version.artifacts else "ols-semantic/1 (legacy)",
         )
 
     def _snapshot_of(self, ontology_id: str, ref: str) -> tuple[str, OntologySnapshot]:
@@ -212,34 +222,16 @@ class RegistryService:
         published_at = utcnow()
         stem = f"{snapshot.metadata.prefix}-{version_label}"
         try:
-            json_artifact = self.artifacts.store(
+            stored = self._store_package(
                 ontology_id,
                 version_id,
-                fmt="json",
-                filename=f"{stem}.json",
-                media_type="application/json",
-                content=json.dumps(
-                    {
-                        "ontology_id": ontology_id,
-                        "version": version_label,
-                        "published_at": published_at.isoformat(),
-                        "published_by": request.published_by,
-                        "content_hash": digest,
-                        "snapshot": snapshot.model_dump(mode="json"),
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                ).encode("utf-8"),
-            )
-            turtle_artifact = self.artifacts.store(
-                ontology_id,
-                version_id,
-                fmt="turtle",
-                filename=f"{stem}.ttl",
-                media_type="text/turtle",
-                content=to_turtle(
-                    snapshot, version=version_label, published_at=published_at, release_notes=request.release_notes
-                ),
+                snapshot,
+                stem=stem,
+                version_label=version_label,
+                published_at=published_at,
+                published_by=request.published_by,
+                release_notes=request.release_notes,
+                digest=digest,
             )
             version = OntologyVersion(
                 id=version_id,
@@ -260,9 +252,14 @@ class RegistryService:
                     "info_count": report.info_count,
                 },
                 change_summary={k: v.model_dump() for k, v in diff.summary.items()}
-                | {"suggested_bump": diff.suggested_bump, "breaking_changes": diff.breaking_changes},
+                | {
+                    "suggested_bump": diff.suggested_bump,
+                    "breaking_changes": diff.breaking_changes,
+                    "notes": diff.notes,
+                    "axiom_changes": len(diff.axiom_changes),
+                },
                 previous_version_id=latest.id if latest else None,
-                artifacts={"json": json_artifact.as_dict(), "turtle": turtle_artifact.as_dict()},
+                artifacts={fmt: artifact.as_dict() for fmt, artifact in stored.items()},
                 release_notes=request.release_notes,
                 published_by=request.published_by,
                 published_at=published_at,
@@ -284,13 +281,115 @@ class RegistryService:
             raise
         return self.get_version(ontology_id, version_id)
 
-    def export(self, ontology_id: str, version_id: str, fmt: ExportFormat) -> tuple[bytes, StoredArtifact]:
+    def _store_package(
+        self,
+        ontology_id: str,
+        version_id: str,
+        snapshot: OntologySnapshot,
+        *,
+        stem: str,
+        version_label: str,
+        published_at: object,
+        published_by: str,
+        release_notes: str,
+        digest: str,
+    ) -> dict[str, StoredArtifact]:
+        """Write the immutable version package: snapshot JSON, OWL in four RDF syntaxes and a manifest."""
+        stored: dict[str, StoredArtifact] = {}
+        stored["json"] = self.artifacts.store(
+            ontology_id,
+            version_id,
+            fmt="json",
+            filename=f"{stem}.json",
+            media_type="application/json",
+            content=json.dumps(
+                {
+                    "ontology_id": ontology_id,
+                    "version": version_label,
+                    "published_at": published_at.isoformat(),  # type: ignore[attr-defined]
+                    "published_by": published_by,
+                    "content_hash": digest,
+                    "snapshot": snapshot.model_dump(mode="json"),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        )
+        graph = snapshot_to_owl(
+            snapshot, version=version_label, published_at=published_at, release_notes=release_notes  # type: ignore[arg-type]
+        )
+        for fmt in RDF_EXPORT_FORMATS:
+            info = FORMATS[fmt]
+            stored[fmt] = self.artifacts.store(
+                ontology_id,
+                version_id,
+                fmt=fmt,
+                filename=f"{stem}.{info.extension}",
+                media_type=info.media_type,
+                content=serialize(graph, fmt),
+            )
+        onto = str(ontology_iri_of(snapshot))
+        manifest = {
+            "package_format": PACKAGE_FORMAT,
+            "snapshot_format": snapshot.format,
+            "semantic_profile": SEMANTIC_PROFILE,
+            "ontology_id": ontology_id,
+            "version_id": version_id,
+            "version": version_label,
+            "ontology_iri": onto,
+            "version_iri": f"{onto}/{version_label}",
+            "prefixes": {snapshot.metadata.prefix: snapshot.metadata.namespace}
+            | {p.prefix: p.namespace for p in snapshot.metadata.prefixes},
+            "imports": snapshot.metadata.imports,
+            "content_hash": digest,
+            "preserved_axioms": len(snapshot.extension_axioms),
+            "artifacts": {
+                fmt: {"filename": a.filename, "media_type": a.media_type, "sha256": a.sha256, "size": a.size}
+                for fmt, a in stored.items()
+            },
+            "generator": GENERATOR,
+            "published_by": published_by,
+            "published_at": published_at.isoformat(),  # type: ignore[attr-defined]
+        }
+        stored["manifest"] = self.artifacts.store(
+            ontology_id,
+            version_id,
+            fmt="manifest",
+            filename=f"{stem}.manifest.json",
+            media_type="application/json",
+            content=json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8"),
+        )
+        return stored
+
+    def export(self, ontology_id: str, version_id: str, fmt: ExportFormat) -> tuple[bytes, StoredArtifact, bool]:
+        """Return (content, artifact, derived). Stored artifacts are verified by SHA-256.
+
+        Legacy (pre-Phase 4) versions only stored Turtle and JSON; other RDF syntaxes are *derived*
+        from the stored Turtle (same graph, different syntax) and labelled as such. Nothing is written.
+        """
         version = self._require_version(ontology_id, version_id)
         stored = version.artifacts.get(fmt)
-        if stored is None:
-            raise NotFoundError(f"No '{fmt}' artifact exists for this version.", code="EXPORT_FORMAT_NOT_AVAILABLE")
-        artifact = StoredArtifact(**stored)
-        try:
-            return self.artifacts.read(artifact), artifact
-        except ArtifactIntegrityError as error:
-            raise ArtifactUnavailableError(str(error)) from error
+        if stored is not None:
+            artifact = StoredArtifact(**stored)
+            try:
+                return self.artifacts.read(artifact), artifact, False
+            except ArtifactIntegrityError as error:
+                raise ArtifactUnavailableError(str(error)) from error
+        if fmt in RDF_EXPORT_FORMATS and "turtle" in version.artifacts:
+            source = StoredArtifact(**version.artifacts["turtle"])
+            try:
+                turtle = self.artifacts.read(source)
+            except ArtifactIntegrityError as error:
+                raise ArtifactUnavailableError(str(error)) from error
+            info = FORMATS[fmt]
+            content = serialize(parse_rdf(turtle, "turtle"), fmt)
+            derived = StoredArtifact(
+                format=fmt,
+                filename=f"{source.filename.rsplit('.', 1)[0]}.{info.extension}",
+                path="",
+                media_type=info.media_type,
+                sha256=hashlib.sha256(content).hexdigest(),
+                size=len(content),
+            )
+            return content, derived, True
+        raise NotFoundError(f"No '{fmt}' artifact exists for this version.", code="EXPORT_FORMAT_NOT_AVAILABLE")

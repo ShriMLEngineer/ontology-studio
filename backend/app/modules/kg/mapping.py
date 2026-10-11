@@ -156,7 +156,7 @@ def validate_mapping(spec: MappingSpec, columns: list[str], view: OntologyView) 
                         f"{path}.property_id",
                     )
                 )
-            elif entity.class_id and entity.class_id in view.classes and not view.is_a(entity.class_id, prop.domain_id):
+            elif entity.class_id and entity.class_id in view.classes and not view.satisfies(entity.class_id, prop.domain_id):
                 issues.append(
                     MappingIssue(
                         "warning",
@@ -185,8 +185,8 @@ def validate_mapping(spec: MappingSpec, columns: list[str], view: OntologyView) 
             continue
         subject_cls, object_cls = entity_class.get(rel.subject), entity_class.get(rel.object)
         if subject_cls in view.classes and object_cls in view.classes:
-            forward = view.is_a(subject_cls, prop.domain_id) and view.is_a(object_cls, prop.range_id)
-            reverse = view.is_a(object_cls, prop.domain_id) and view.is_a(subject_cls, prop.range_id)
+            forward = view.satisfies(subject_cls, prop.domain_id) and view.satisfies(object_cls, prop.range_id)
+            reverse = view.satisfies(object_cls, prop.domain_id) and view.satisfies(subject_cls, prop.range_id)
             if not forward:
                 hint = " The direction appears reversed." if reverse else ""
                 issues.append(
@@ -479,7 +479,7 @@ def suggest_mapping(columns: list[str], view: OntologyView) -> tuple[MappingSpec
             continue
         candidates = [normalized[c], f"{normalize_term(master_label)} {normalized[c]}"]
         prop_id = next((p for p in (view.resolve_datatype_property(n) for n in candidates) if p), None)
-        if prop_id and view.is_a(master.class_id, view.datatype_properties[prop_id].domain_id):
+        if prop_id and view.satisfies(master.class_id, view.datatype_properties[prop_id].domain_id):
             master.attributes.append(AttributeMapping(column=c, property_id=prop_id))
 
     relationships: list[RelationshipMapping] = []

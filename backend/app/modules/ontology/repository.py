@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.modules.ontology.domain import (
     ClassDefinition,
     DatatypePropertyDefinition,
+    ExtensionAxiom,
     ObjectPropertyDefinition,
     OntologySchema,
 )
@@ -16,6 +17,7 @@ from app.modules.ontology.models import (
     Ontology,
     OntologyClassRecord,
     OntologyDiagramLayout,
+    OntologyExtensionAxiomRecord,
 )
 from app.modules.ontology.schemas import OntologyStats, PublishedVersionRef
 from app.modules.registry.models import OntologyVersion
@@ -27,8 +29,10 @@ ELEMENT_MODELS: tuple[type[ElementRecord], ...] = (
     DatatypePropertyRecord,
 )
 
-CLASS_FIELDS = ("local_name", "label", "description", "aliases", "parent_ids")
-OBJECT_PROPERTY_FIELDS = ("local_name", "label", "description", "aliases", "domain_id", "range_id")
+CLASS_FIELDS = ("local_name", "label", "description", "aliases", "parent_ids", "iri", "semantics")
+OBJECT_PROPERTY_FIELDS = (
+    "local_name", "label", "description", "aliases", "domain_id", "range_id", "iri", "semantics",
+)
 DATATYPE_PROPERTY_FIELDS = (
     "local_name",
     "label",
@@ -38,6 +42,8 @@ DATATYPE_PROPERTY_FIELDS = (
     "datatype",
     "required",
     "multi_valued",
+    "iri",
+    "semantics",
 )
 
 
@@ -217,6 +223,10 @@ class OntologyRepository:
         return OntologySchema(
             namespace=ontology.namespace,
             prefix=ontology.prefix,
+            ontology_iri=ontology.ontology_iri,
+            prefixes=ontology.prefixes or [],
+            imports=ontology.imports or [],
+            require_domain_range=ontology.require_domain_range,
             classes=[to_class_definition(r) for r in self.classes(ontology.id)],
             object_properties=[
                 to_object_property_definition(r) for r in self.object_properties(ontology.id)
@@ -224,4 +234,18 @@ class OntologyRepository:
             datatype_properties=[
                 to_datatype_property_definition(r) for r in self.datatype_properties(ontology.id)
             ],
+            extension_axioms=[
+                ExtensionAxiom(
+                    id=a.id, scope=a.scope, kind=a.kind, summary=a.summary, ntriples=a.ntriples, anchor_ids=a.anchor_ids
+                )
+                for a in self.extension_axioms(ontology.id)
+            ],
         )
+
+    def extension_axioms(self, ontology_id: str) -> list[OntologyExtensionAxiomRecord]:
+        stmt = (
+            select(OntologyExtensionAxiomRecord)
+            .where(OntologyExtensionAxiomRecord.ontology_id == ontology_id)
+            .order_by(OntologyExtensionAxiomRecord.sort_order, OntologyExtensionAxiomRecord.created_at)
+        )
+        return list(self.session.scalars(stmt))

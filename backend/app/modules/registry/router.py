@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_session
 from app.modules.registry.diff import SchemaDiff
 from app.modules.registry.schemas import PublishPreview, PublishRequest, VersionDetail, VersionSummary
-from app.modules.registry.service import RegistryService
+from app.modules.registry.service import ExportFormat, RegistryService
 
 router = APIRouter(prefix="/ontologies/{ontology_id}", tags=["registry"])
 
@@ -46,15 +46,18 @@ def export_version(
     ontology_id: str,
     version_id: str,
     service: Service,
-    fmt: Annotated[Literal["turtle", "json"], Query(alias="format")] = "turtle",
+    fmt: Annotated[ExportFormat, Query(alias="format")] = "turtle",
 ) -> Response:
-    content, artifact = service.export(ontology_id, version_id, fmt)
+    """Stored artifacts are returned verbatim (SHA-256 verified). For legacy versions, RDF syntaxes
+    that were not published are derived from the stored Turtle and marked ``X-Artifact-Derived``."""
+    content, artifact, derived = service.export(ontology_id, version_id, fmt)
     return Response(
         content=content,
         media_type=artifact.media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{artifact.filename}"',
             "X-Content-SHA256": artifact.sha256,
+            "X-Artifact-Derived": "true" if derived else "false",
         },
     )
 

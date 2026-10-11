@@ -28,6 +28,7 @@ from app.modules.ontology.router import router as ontology_router
 from app.modules.projects.router import router as projects_router
 from app.modules.registry.artifacts import FilesystemArtifactRepository
 from app.modules.registry.router import router as registry_router
+from app.modules.semantics.router import router as semantics_router
 from app.modules.seed.service import seed_demo_data
 from app.modules.sources.router import router as sources_router
 from app.modules.validation.router import router as validation_router
@@ -125,5 +126,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(governance_router)
     api.include_router(registry_router)
     api.include_router(kg_router)
+    api.include_router(semantics_router)
     app.include_router(api)
     return app
