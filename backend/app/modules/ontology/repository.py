@@ -17,7 +17,8 @@ from app.modules.ontology.models import (
     OntologyClassRecord,
     OntologyDiagramLayout,
 )
-from app.modules.ontology.schemas import OntologyStats
+from app.modules.ontology.schemas import OntologyStats, PublishedVersionRef
+from app.modules.registry.models import OntologyVersion
 
 ElementRecord = OntologyClassRecord | ObjectPropertyRecord | DatatypePropertyRecord
 ELEMENT_MODELS: tuple[type[ElementRecord], ...] = (
@@ -98,6 +99,32 @@ class OntologyRepository:
     def count_by_project(self) -> dict[str, int]:
         stmt = select(Ontology.project_id, func.count()).group_by(Ontology.project_id)
         return {project_id: count for project_id, count in self.session.execute(stmt).all()}
+
+    def latest_versions(self, ontology_ids: list[str]) -> dict[str, PublishedVersionRef]:
+        if not ontology_ids:
+            return {}
+        stmt = (
+            select(
+                OntologyVersion.ontology_id,
+                OntologyVersion.id,
+                OntologyVersion.version,
+                OntologyVersion.draft_revision,
+                OntologyVersion.published_at,
+            )
+            .where(OntologyVersion.ontology_id.in_(ontology_ids))
+            .order_by(OntologyVersion.sequence.desc())
+        )
+        result: dict[str, PublishedVersionRef] = {}
+        for oid, vid, version, revision, published_at in self.session.execute(stmt).all():
+            result.setdefault(
+                oid,
+                PublishedVersionRef(id=vid, version=version, draft_revision=revision, published_at=published_at),
+            )
+        return result
+
+    def version_count(self, ontology_id: str) -> int:
+        stmt = select(func.count()).select_from(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+        return self.session.scalar(stmt) or 0
 
     def stats(self, ontology_ids: list[str]) -> dict[str, OntologyStats]:
         result = {oid: OntologyStats() for oid in ontology_ids}

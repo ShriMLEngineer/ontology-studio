@@ -52,6 +52,13 @@ class OntologyStats(BaseModel):
     datatype_property_count: int = 0
 
 
+class PublishedVersionRef(BaseModel):
+    id: str
+    version: str
+    draft_revision: int
+    published_at: datetime
+
+
 class OntologyRead(BaseModel):
     id: str
     project_id: str
@@ -61,6 +68,7 @@ class OntologyRead(BaseModel):
     description: str
     draft_revision: int
     stats: OntologyStats
+    latest_version: PublishedVersionRef | None = None
     created_at: datetime
     updated_at: datetime
 

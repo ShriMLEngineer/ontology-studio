@@ -108,6 +108,7 @@ class OntologyService:
             description=ontology.description,
             draft_revision=ontology.draft_revision,
             stats=stats,
+            latest_version=self.repo.latest_versions([ontology.id]).get(ontology.id),
             created_at=ontology.created_at,
             updated_at=ontology.updated_at,
         )
@@ -239,6 +240,14 @@ class OntologyService:
 
     def delete_ontology(self, ontology_id: str) -> None:
         ontology = self._require(ontology_id)
+        published = self.repo.version_count(ontology.id)
+        if published:
+            raise ConflictError(
+                f"Ontology '{ontology.name}' has {published} published version(s). Published versions are "
+                "immutable records and cannot be deleted.",
+                code="ONTOLOGY_HAS_PUBLISHED_VERSIONS",
+                details={"published_versions": published},
+            )
         record_activity(
             self.session,
             project_id=ontology.project_id,
@@ -344,6 +353,62 @@ class OntologyService:
             changes=changes,
             revision_incremented=revision_incremented,
         )
+
+    def replace_schema(
+        self,
+        ontology: Ontology,
+        schema: OntologySchema,
+        *,
+        event_type: str,
+        summary: str,
+        details: dict[str, Any] | None = None,
+    ) -> DraftChangeSummary:
+        """Persist ``schema`` as the draft content without committing (caller owns the transaction).
+
+        Used by governed workflows (e.g. applying approved proposals). New classes are placed below
+        the existing diagram; positions of removed classes are pruned.
+        """
+        changes = DraftChangeSummary()
+        changes.classes = self._sync_elements(
+            OntologyClassRecord, ontology.id, self.repo.classes(ontology.id), schema.classes, CLASS_FIELDS
+        )
+        changes.object_properties = self._sync_elements(
+            ObjectPropertyRecord,
+            ontology.id,
+            self.repo.object_properties(ontology.id),
+            schema.object_properties,
+            OBJECT_PROPERTY_FIELDS,
+        )
+        changes.datatype_properties = self._sync_elements(
+            DatatypePropertyRecord,
+            ontology.id,
+            self.repo.datatype_properties(ontology.id),
+            schema.datatype_properties,
+            DATATYPE_PROPERTY_FIELDS,
+        )
+
+        layout = self.repo.get_layout(ontology.id)
+        class_ids = [c.id for c in schema.classes]
+        positions = {k: v for k, v in (layout.positions or {}).items() if k in class_ids}
+        missing = [cid for cid in class_ids if cid not in positions]
+        if missing:
+            xs = [p["x"] for p in positions.values()] or [0.0]
+            ys = [p["y"] for p in positions.values()] or [-260.0]
+            for index, cid in enumerate(missing):
+                positions[cid] = {"x": min(xs) + (index % 5) * 280, "y": max(ys) + 260 + (index // 5) * 220}
+        if positions != (layout.positions or {}):
+            layout.positions = positions
+            changes.layout_changed = True
+
+        if changes.has_semantic_changes:
+            self._touch(ontology)
+            self._activity(
+                ontology,
+                event_type,
+                f"{summary} (revision {ontology.draft_revision}): {changes.describe()}",
+                {"changes": changes.model_dump(), **(details or {})},
+            )
+        return changes
 
     def _ensure_unique_ids(self, request: DraftSaveRequest) -> None:
         seen: set[str] = set()

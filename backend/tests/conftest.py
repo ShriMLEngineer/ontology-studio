@@ -81,3 +81,27 @@ def add_class(client: TestClient, ontology_id: str, label: str, **extra: Any) ->
 
 def error_code(response: Any) -> str:
     return response.json()["error"]["code"]
+
+
+@pytest.fixture
+def studio(db_path: Path) -> Iterator[dict[str, Any]]:
+    """Seeded app with an uploaded source document and a scripted (test-double) LLM provider."""
+    from tests.fakes import DISCOVERY_FINDINGS, SOURCE_TEXT, ScriptedLLMProvider
+
+    with TestClient(create_app(make_settings(db_path, seed=True))) as client:
+        project = client.get("/api/projects").json()[0]
+        ontology = client.get(f"/api/projects/{project['id']}/ontologies").json()[0]
+        document = client.post(
+            f"/api/projects/{project['id']}/sources", files={"file": ("handbook.md", SOURCE_TEXT.encode())}
+        ).json()
+        provider = ScriptedLLMProvider([{"findings": DISCOVERY_FINDINGS}])
+        client.app.state.llm_provider = provider  # type: ignore[attr-defined]
+        yield {"client": client, "project": project, "ontology": ontology, "document": document, "provider": provider}
+
+
+def start_run(studio: dict[str, Any], **body: Any) -> Any:
+    client: TestClient = studio["client"]
+    return client.post(
+        f"/api/ontologies/{studio['ontology']['id']}/discovery-runs",
+        json={"document_ids": [studio["document"]["id"]], "requested_by": "Dana SME", **body},
+    )

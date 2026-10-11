@@ -16,10 +16,15 @@ from app.db import models as _all_models  # noqa: F401  (registers every table f
 from app.db.migrations import upgrade_database
 from app.db.session import create_db_engine, create_session_factory, get_session
 from app.modules.activity.router import router as activity_router
+from app.modules.discovery.router import router as discovery_router
+from app.modules.discovery.service import mark_interrupted_runs
+from app.modules.governance.router import router as governance_router
 from app.modules.llm.service import build_llm_provider
 from app.modules.llm.service import router as llm_router
 from app.modules.ontology.router import router as ontology_router
 from app.modules.projects.router import router as projects_router
+from app.modules.registry.artifacts import FilesystemArtifactRepository
+from app.modules.registry.router import router as registry_router
 from app.modules.seed.service import seed_demo_data
 from app.modules.sources.router import router as sources_router
 from app.modules.validation.router import router as validation_router
@@ -69,6 +74,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         if settings.auto_migrate:
             upgrade_database(settings.database_url)
+        with session_factory() as session:
+            interrupted = mark_interrupted_runs(session)
+            if interrupted:
+                logger.warning("Marked %s interrupted discovery run(s) as failed", interrupted)
         if settings.seed_demo_data:
             with session_factory() as session:
                 seed_demo_data(session)
@@ -85,6 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.llm_provider = build_llm_provider(settings)
+    app.state.artifact_repository = FilesystemArtifactRepository(settings.artifact_dir)
 
     app.add_middleware(
         CORSMiddleware,
@@ -102,5 +112,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(validation_router)
     api.include_router(llm_router)
     api.include_router(sources_router)
+    api.include_router(discovery_router)
+    api.include_router(governance_router)
+    api.include_router(registry_router)
     app.include_router(api)
     return app
