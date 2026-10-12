@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_session
 from app.modules.settings.schemas import (
+    GraphActivation,
     GraphConnectionInput,
     GraphConnectionRead,
     GraphKindRead,
@@ -115,8 +116,21 @@ def delete_graph(connection_id: str, service: Service, actor: Actor = "") -> Res
 
 @router.post("/settings/graph-connections/{connection_id}/test", response_model=GraphConnectionRead)
 def test_graph(connection_id: str, service: Service) -> GraphConnectionRead:
-    """Real connection test (read-only): local database, embedded store, or SPARQL ASK on the endpoint."""
+    """Provider-specific, read-only connection test executed on the backend (never creates or changes graph data)."""
     return service.test_graph(connection_id)
+
+
+@router.post("/settings/graph-connections/{connection_id}/activation", response_model=GraphConnectionRead)
+def set_graph_activation(
+    connection_id: str, data: GraphActivation, service: Service, actor: Actor = ""
+) -> GraphConnectionRead:
+    return service.set_graph_enabled(connection_id, data.enabled, actor)
+
+
+@router.post("/settings/graph-connections/{connection_id}/default", response_model=GraphConnectionRead)
+def set_default_graph(connection_id: str, service: Service, actor: Actor = "") -> GraphConnectionRead:
+    """Preselect this graph database for new projects (existing projects are not changed)."""
+    return service.set_default_graph(connection_id, actor)
 
 
 # ---------------------------------------------------------------------------------- project defaults

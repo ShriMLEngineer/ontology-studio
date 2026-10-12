@@ -29,12 +29,12 @@ in the application logic is specific to it.
 | **Registry**: validation-gated publication of immutable versions, semantic versioning, history, comparison, Turtle / JSON export with checksums | ✅ working |
 | **KG pipeline**: CSV + PDF sources, saved source-to-ontology mappings, published-version builds with ten persisted stages (nine for builds before Phase 4) and logs, history, rebuild | ✅ working |
 | **KG extraction & validation**: deterministic record mapping, ontology-guided LLM extraction, entity resolution, independent structural and evidence validation → accepted / rejected / quarantined with reasons | ✅ working (verified with `qwen2.5:7b`) |
-| **Graph**: provider-independent `GraphStore`, durable SQL adapter (Gremlin-shaped, build-scoped, idempotent), Cytoscape.js explorer with search, filters and source provenance | ✅ working (Cosmos DB Gremlin adapter **not** implemented - interface only) |
+| **Graph**: provider-independent `GraphStore`, durable SQL adapter (Gremlin-shaped, build-scoped, idempotent), Neo4j and Cosmos DB Gremlin stores for external deployments, Cytoscape.js explorer with search, filters and source provenance | ✅ working (Neo4j verified against AuraDB; Cosmos DB adapter implemented, **not** live-verified) |
 | **Evaluation & feedback**: metrics with explicit denominators, ontology gaps → SME proposals → new version → rebuild | ✅ working |
 | **RDF / OWL** (Phase 4): persisted IRIs locked after publication, OWL semantics in the inspectors (equivalence, disjointness, restrictions, inverses, characteristics), lossless RDF import with preserved axioms, Turtle / RDF-XML / JSON-LD / N-Triples packages, OWL 2 RL reasoning preview | ✅ working |
 | **SHACL** (Phase 4): generated, authored and preserved shapes, PySHACL validation without inference, versioned validation policies, per-fact SHACL lane; malformed shapes block publication | ✅ working |
-| **Multi-graph deployments** (Phase 4): RDF and property-graph projections, compatibility reports, verified deployments to embedded Oxigraph and any SPARQL 1.1 endpoint, explorer read-back, read-only SPARQL console | ✅ working (Neo4j and Cosmos DB adapters **not** built - no server available; previews only) |
-| **Settings** (Phase 4): LLM models and graph databases registered, tested for real and selected per project, run and build | ✅ working |
+| **Multi-graph deployments** (Phase 4): RDF and property-graph projections, compatibility reports, verified deployments to embedded Oxigraph, SPARQL 1.1 endpoints (generic, Fuseki, GraphDB), Neo4j / AuraDB and Azure Cosmos DB Gremlin, explorer read-back, read-only SPARQL console | ✅ working (verified live: Oxigraph SPARQL server, Neo4j AuraDB; GraphDB, Fuseki and Cosmos DB implemented but **not** live-verified) |
+| **Settings** (Phase 4): LLM models and a provider-aware graph database registry (Cosmos DB Gremlin, Neo4j, GraphDB, Fuseki, generic SPARQL, local SQL): register, test for real, enable/disable, set default; selected per project, run and build | ✅ working - see [docs/GRAPH_DATABASES.md](docs/GRAPH_DATABASES.md) and [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) |
 
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the full plan and acceptance
 criteria, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
@@ -212,8 +212,8 @@ docs/       ARCHITECTURE.md, IMPLEMENTATION_PLAN.md, DECISIONS.md
   sometimes reverses relationships - such facts are quarantined or rejected (never repaired), so
   recall from documents is modest. Runs and builds execute as in-process background tasks (one
   discovery run per ontology and one KG build per project at a time); a restart fails running jobs.
-* Graph storage uses the local SQL adapter; the Azure Cosmos DB Gremlin adapter is designed
-  (same `GraphStore` protocol) but not implemented or verified. The explorer is sized for MVP
+* Graph storage defaults to the local SQL adapter. Neo4j and Cosmos DB Gremlin deployments use the same
+  `GraphStore` read protocol; Cosmos DB is not live-verified (see docs/GRAPH_DATABASES.md). The explorer is sized for MVP
   graphs (up to a few thousand elements; larger graphs are truncated with filters).
 * Structured sources are CSV/TSV uploads (up to 10,000 records per source); the Snowflake connector
   is an interface only. Mappings cover one entity per mapping row, single-column identifiers and

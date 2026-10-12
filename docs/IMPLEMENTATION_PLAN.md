@@ -219,9 +219,10 @@ without breaking Phase 1-3 data or behaviour. Baseline: the approved
 
 ### Deferred / not available
 
-* Neo4j and Azure Cosmos DB (Gremlin) adapters: no server or account was available to build and
-  verify them against; both kinds are listed as unavailable with the reason, and compatibility
-  previews use documented (unverified) capability profiles. No integration is simulated.
+* GraphDB, Apache Jena Fuseki and Azure Cosmos DB (Gremlin) deployments are implemented but not
+  verified against live servers (none was available); they are labelled *adapter not live-tested* in
+  Settings and in compatibility reports. Neo4j was verified against AuraDB 5.27. See
+  [GRAPH_DATABASES.md](GRAPH_DATABASES.md). No integration is simulated.
 * Custom (user-defined) mapping profiles - three built-in, versioned profiles only.
 * Editing imported (preserved) SHACL in the form editor - preserved verbatim, removable.
 * Validation policies are code-defined and versioned (no policy editor).

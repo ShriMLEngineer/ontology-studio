@@ -40,7 +40,7 @@ export function LlmConfigSelect({
   )
 }
 
-/** Graph target picker. The empty value means "use the project's default". */
+/** Graph target picker. The empty value means "use the project's default". Disabled registrations are not offered. */
 export function GraphTargetSelect({
   value,
   onChange,
@@ -63,11 +63,37 @@ export function GraphTargetSelect({
       {allowProjectDefault && (
         <option value={PROJECT_DEFAULT}>Project default{projectDefault ? ` (${projectDefault.name})` : ''}</option>
       )}
-      {(connections.data ?? []).map((c) => (
-        <option key={c.id} value={c.id}>
-          {c.name} · {c.model === 'rdf' ? 'RDF' : 'property graph'}
-        </option>
-      ))}
+      {(connections.data ?? [])
+        .filter((c) => c.enabled || c.id === value)
+        .map((c) => (
+          <option key={c.id} value={c.id} title={graphTargetHint(c)}>
+            {c.name} · {c.model === 'rdf' ? 'RDF' : 'property graph'}
+            {graphTargetSuffix(c)}
+          </option>
+        ))}
     </NativeSelect>
   )
+}
+
+function isInternal(c: GraphConnection): boolean {
+  return c.builtin || c.provider === 'local-sql'
+}
+
+/** A short, honest qualifier: a connection that was never tested or cannot receive deployments says so. */
+function graphTargetSuffix(c: GraphConnection): string {
+  if (!c.enabled) return ' (disabled)'
+  if (c.capabilities.deployment_supported && !c.capabilities.write_configured) return ' (read-only)'
+  if (!isInternal(c) && c.status === 'failed') return ' (connection failed)'
+  if (!isInternal(c) && c.status === 'not_tested') return ' (not tested)'
+  return ''
+}
+
+function graphTargetHint(c: GraphConnection): string {
+  const cap = c.capabilities
+  return [
+    c.kind_label,
+    cap.deployment_ready ? 'Ready for deployment' : 'Not ready for deployment',
+    cap.deployment_verified ? 'A deployment was verified' : 'No verified deployment yet',
+    cap.live_tested ? 'Adapter live-tested' : 'Adapter not live-tested',
+  ].join(' · ')
 }

@@ -110,15 +110,25 @@ def test_pasted_secret_in_credential_field_is_rejected_without_being_echoed(clie
         assert "NAME of a server environment variable" in messages
 
 
-def test_graph_connections_offer_only_available_adapters(client: TestClient, harness: str) -> None:
+def test_graph_provider_catalogue_distinguishes_connection_from_deployment_support(
+    client: TestClient, harness: str
+) -> None:
     kinds = {k["id"]: k for k in client.get("/api/settings/graph-kinds").json()}
+    assert [k["id"] for k in kinds.values() if k["registrable"]] == [
+        "cosmos-gremlin", "neo4j", "graphdb", "fuseki", "sparql-http", "local-sql",
+    ], "the dropdown order of the providers"
     assert kinds["sparql-http"]["registrable"] and kinds["sparql-http"]["available"]
-    assert not kinds["neo4j"]["available"] and "Neo4j server" in kinds["neo4j"]["unavailable_reason"]
-    assert not kinds["cosmos-gremlin"]["available"]
-    refused = client.post("/api/settings/graph-connections", json={"name": "Neo", "kind": "neo4j", "config": {}})
-    assert refused.status_code == 422 and error_code(refused) == "GRAPH_KIND_NOT_AVAILABLE"
+    assert kinds["neo4j"]["registrable"] and kinds["neo4j"]["model"] == "property-graph"
+    assert kinds["cosmos-gremlin"]["model"] == "property-graph"
+    assert kinds["graphdb"]["model"] == "rdf" and kinds["fuseki"]["model"] == "rdf"
+    assert kinds["neo4j"]["live_tested"] and not kinds["cosmos-gremlin"]["live_tested"], "live verification is stated honestly"
+    assert not kinds["graphdb"]["live_tested"] and not kinds["fuseki"]["live_tested"]
+    assert all(k["connection_supported"] and k["deployment_supported"] and k["read_supported"] for k in kinds.values())
+    assert not kinds["oxigraph"]["registrable"], "the embedded store is built in, not registered"
     incomplete = client.post("/api/settings/graph-connections", json={"name": "S", "kind": "sparql-http", "config": {}})
     assert incomplete.status_code == 422 and error_code(incomplete) == "GRAPH_CONFIG_INVALID"
+    refused = client.post("/api/settings/graph-connections", json={"name": "Ox", "kind": "oxigraph", "config": {}})
+    assert refused.status_code == 422 and error_code(refused) == "GRAPH_KIND_NOT_AVAILABLE"
 
     builtins = {c["id"]: c for c in client.get("/api/settings/graph-connections").json()}
     assert {"local-sql", "oxigraph-embedded"} <= set(builtins)

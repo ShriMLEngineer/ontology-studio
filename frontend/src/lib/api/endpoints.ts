@@ -309,6 +309,10 @@ export const settingsApi = {
     http.put<GraphConnection>(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`, body),
   deleteGraph: (id: string, actor: string) => http.delete(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`),
   testGraph: (id: string) => http.post<GraphConnection>(`/settings/graph-connections/${enc(id)}/test`),
+  setGraphEnabled: (id: string, enabled: boolean, actor: string) =>
+    http.post<GraphConnection>(`/settings/graph-connections/${enc(id)}/activation?actor=${enc(actor)}`, { enabled }),
+  setDefaultGraph: (id: string, actor: string) =>
+    http.post<GraphConnection>(`/settings/graph-connections/${enc(id)}/default?actor=${enc(actor)}`),
 }
 
 export const lifecycleApi = {

@@ -31,7 +31,7 @@ flowchart LR
   api --> db[(SQLite now<br/>PostgreSQL-ready)]
   api --> llm[[LLM provider adapters<br/>OpenAI · Anthropic · Azure AI Foundry · Ollama · legacy compatible]]
   api --> artifacts[(Write-once artifact store<br/>JSON · Turtle)]
-  api --> graph[(GraphStore<br/>SqlGraphStore now · Cosmos DB Gremlin later)]
+  api --> graph[(GraphStore<br/>SqlGraphStore canonical · Neo4j · Cosmos DB Gremlin)]
 ```
 
 ## 3. Repository layout
@@ -58,7 +58,7 @@ flowchart LR
 │   │   │   └── seed/            Supply Chain demonstration data (+ sample source loader)
 │   │   ├── main.py              app factory, router composition, lifespan
 │   │   └── cli.py               `migrate` / `seed` / `seed-samples` commands
-│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers), 0003 (Phase 3), 0004+ (Phase 4)
+│   ├── migrations/              Alembic 0001 (Phase 1), 0002 (Phase 2 + immutability triggers), 0003 (Phase 3), 0004+ (Phase 4), 0009 (LLM providers), 0010 (graph provider registry)
 │   └── tests/                   pytest unit + API tests (LLM via an explicit test double)
 ├── frontend/
 │   ├── src/features/ontology/   designer · discovery · review · validation · semantics (RDF/OWL) · registry · governance
@@ -159,7 +159,7 @@ erDiagram
 | `kg_candidate_facts.lanes` | Phase 4 per-fact lanes: policy (id, relaxed application checks), SHACL results with outcomes, entailment checks and inferred types. NULL for builds evaluated before Phase 4. |
 | `projects.data_namespace` | Optional base for instance IRIs (`{data_namespace}e/{vertex_id}`); default `{ontology IRI}/data/`, frozen per build. |
 | `llm_configurations` | Registered provider, endpoint, model, non-secret provider settings, inference parameters and enabled state, with the **name** of the environment variable that holds any API credential; last connection test. Credential values are never persisted or returned. |
-| `graph_connections` | Registered graph databases (kind, non-secret configuration, environment variable for the password); last connection test. |
+| `graph_connections` | Registered graph databases: provider (`kind`), graph data model, enabled flag, optional workspace-default flag, non-secret provider settings (JSON) and the **name** of the environment variable holding the credential; last connection test. Migration `0010`. |
 | `projects.default_llm_config_id` / `default_discovery_llm_config_id` / `default_kg_llm_config_id` | Legacy shared and purpose-specific project defaults; NULL resolves to the environment default LLM. Existing shared values are backfilled to both purpose-specific columns by migration 0009. |
 | `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
 | `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
@@ -168,6 +168,7 @@ erDiagram
 | `kg_candidate_facts` | Type, relationship and attribute facts with independent structural, evidence and resolution check results, status, reasons, sources and the graph element they produced. |
 | `kg_ontology_gaps` | Unknown classes, relationships, attributes and unmapped fields with suggestion, evidence, occurrences and linked proposals. |
 | `graph_vertices`, `graph_edges` | `SqlGraphStore` data keyed by `(graph_id, id)`: Gremlin-shaped labels, properties, fact ids and source ids. |
+| `kg_graph_deployments` | One row per deployment of a build to a target: target, versioned mapping and capability profiles, compatibility report, expected vs verified counts, outcome, and `target_snapshot` (non-secret connection settings the deployment was written with, so reads of history survive registry edits; migration `0010`). |
 
 ### 4.4 AI discovery pipeline
 
@@ -317,9 +318,11 @@ data: 51 accepted, 4 rejected, 2 quarantined); SHACL adds warnings for missing r
 * **Resolution**: discovery runs and KG builds use their own selection, else the project default,
   else the built-in. Builds freeze the effective LLM configuration, graph target and data namespace
   in their configuration snapshot.
-* **Graph kinds** (`graph/targets`): `local-sql`, `oxigraph` (built-in), `sparql-http`
-  (registrable). Neo4j and Azure Cosmos DB (Gremlin) are listed as *not available* with the reason
-  (no reachable server to implement and verify an adapter against); they cannot be registered.
+* **Graph kinds** (`graph/targets/catalog.py`): one catalogue entry per provider drives the Settings form,
+  validation and capability flags: Azure Cosmos DB for Apache Gremlin, Neo4j / AuraDB, Ontotext GraphDB,
+  Apache Jena Fuseki, generic SPARQL 1.1 and the local SQL graph are registrable; embedded Oxigraph is
+  built in. Connection support, deployment support, deployment verification and live testing are reported
+  separately (see [GRAPH_DATABASES.md](GRAPH_DATABASES.md)).
 
 ### 4.6e Multi-graph projections and deployments (Phase 4.4/4.5)
 
@@ -329,8 +332,10 @@ flowchart LR
   pg --> sql[(Local SQL property graph<br/>canonical, graph_id = build)]
   pg --> rdf[project_rdf<br/>data / provenance / ontology graphs]
   rdf --> ox[(Embedded Oxigraph)]
-  rdf --> sp[(SPARQL 1.1 endpoint<br/>CLEAR + INSERT DATA)]
+  rdf --> sp[(SPARQL 1.1 endpoint<br/>GraphDB · Fuseki · generic<br/>CLEAR + INSERT DATA)]
+  pg --> ext[(Neo4j / Cosmos DB Gremlin<br/>scope replace, build id = scope)]
   ox & sp --> rb[RDF reader<br/>→ GraphVertex/GraphEdge] --> ex[Graph Explorer]
+  ext --> ex
   ox & sp --> q[Read-only SPARQL console]
   cap[Capability profile] & mp[Mapping profile] --> cr[Compatibility report] --> dep[(kg_graph_deployments)]
 ```
@@ -344,9 +349,9 @@ flowchart LR
   `{data_namespace}r/{edge_id}` per edge - works on any SPARQL 1.1 store, no RDF-star) and
   `.../ontology` (the published OWL).
 * **Capability profiles** (`graph/capabilities.py`, versioned, e.g. `oxigraph/1`) state what a
-  target represents natively. Profiles of targets with an adapter are *verified* by the adapter
-  and its integration tests; Neo4j and Cosmos DB profiles are documented assumptions used only for
-  compatibility previews. **Mapping profiles** (`rdf-default/1`, `rdf-data-only/1`,
+  target represents natively. Profiles of targets with an adapter are *verified* only when the adapter
+  was exercised against a live server (Neo4j, generic SPARQL, the built-in stores); GraphDB, Fuseki and
+  Cosmos DB profiles say they are not, and compatibility reports repeat that. **Mapping profiles** (`rdf-default/1`, `rdf-data-only/1`,
   `lpg-default/1`) are immutable and code-defined.
 * **Compatibility report** (`graph/compatibility.py`): one row per feature (class membership,
   identity, typed values, lexical forms, multi-valued attributes, provenance, build isolation,
@@ -491,10 +496,11 @@ nodes.
 
 **Graph storage** (`graph/`). `GraphStore` protocol: idempotent `upsert_vertices` /
 `upsert_edges`, `get_vertex` / `get_edge`, `fetch_graph`, `search_vertices`, `edges_of`,
-`neighborhood`, `provenance`, `counts`. `SqlGraphStore` is the durable local adapter (no Neo4j or
-Cosmos connection is configured). The data model is Gremlin-shaped: vertex label = class local
+`neighborhood`, `provenance`, `counts`. `SqlGraphStore` is the durable local adapter and stays the
+canonical store; `Neo4jGraphStore` and `CosmosGremlinStore` (`graph/targets`) implement the same read
+protocol for external deployments and write by replacing a build's scope. The data model is Gremlin-shaped: vertex label = class local
 name, edge label = property local name, properties, and a `graph_id` scope that maps to a Cosmos
-partition key. Edge ids hash (subject, predicate, object), so duplicate facts from several sources
+partition key (and to the `_ols_scope` property in Neo4j). Edge ids hash (subject, predicate, object), so duplicate facts from several sources
 merge into one edge whose provenance lists all of them. Each build writes only its own scope; a
 rebuild never touches an earlier graph.
 
@@ -531,7 +537,7 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | Governance | `GET /ontologies/{id}/proposals?status=&type=&run_id=&origin=&kg_build_id=`, `GET /ontologies/{id}/proposals/stats`, `POST /ontologies/{id}/proposals/apply`, `GET/PATCH /proposals/{id}`, `POST /proposals/{id}/decision`, `POST /proposals/{id}/comments` |
 | Registry | `GET /ontologies/{id}/publish-preview`, `GET/POST /ontologies/{id}/versions`, `GET /ontologies/{id}/versions/{vid}`, `GET /ontologies/{id}/versions/{vid}/export?format=turtle\|rdfxml\|jsonld\|ntriples\|json\|manifest`, `GET /ontologies/{id}/compare` |
 | Semantics (Phase 4) | `GET /ontologies/{id}/rdf?format=&download=`, `POST(multipart) /projects/{id}/ontologies/import`, `GET /ontologies/{id}/imports`, `GET /ontologies/{id}/axioms`, `DELETE /ontologies/{id}/axioms/{aid}?deleted_by=`, `GET /ontologies/{id}/entailments` |
-| Settings (Phase 4) | `GET/POST /settings/llm-configurations`, `GET/PUT/DELETE /settings/llm-configurations/{id}`, `POST /settings/llm-configurations/{id}/test`, `GET /settings/graph-kinds`, `GET/POST /settings/graph-connections`, `GET/PUT/DELETE /settings/graph-connections/{id}`, `POST /settings/graph-connections/{id}/test`, `GET/PUT /projects/{id}/defaults`; `GET /llm/status?project_id=&config_id=` |
+| Settings (Phase 4) | `GET/POST /settings/llm-configurations`, `GET/PUT/DELETE /settings/llm-configurations/{id}`, `POST /settings/llm-configurations/{id}/test`, `GET /settings/graph-kinds` (provider catalogue with form fields and capability flags), `GET/POST /settings/graph-connections`, `GET/PUT/DELETE /settings/graph-connections/{id}`, `POST /settings/graph-connections/{id}/test`, `POST /settings/graph-connections/{id}/activation`, `POST /settings/graph-connections/{id}/default`, `GET/PUT /projects/{id}/defaults`; `GET /llm/status?project_id=&config_id=` |
 | SHACL (Phase 4) | `GET/POST /ontologies/{id}/shapes`, `PUT/DELETE /ontologies/{id}/shapes/{sid}?actor=`, `GET /ontologies/{id}/shapes/rdf`, `POST /ontologies/{id}/shapes/validate`, `POST(multipart) /ontologies/{id}/shapes/import`, `GET /kg/validation-policies`; version export `format=shapes` |
 | KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
 | KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
@@ -623,4 +629,4 @@ All Phase 3 functionality lives in **Knowledge Graph Studio** (build selector in
 | `OntologyArtifactRepository` | `FilesystemArtifactRepository` | Blob storage (e.g. Azure Blob with immutability policies) later. |
 | `StructuredSource` / `TextSource` | `CsvDocumentSource`, `DocumentTextSource` | A Snowflake connector implements `StructuredSource` (columns + streamed records). |
 | `GraphStore` | `SqlGraphStore` (canonical), `MemoryGraphStore` (read model over a deployment read back from RDF) | Azure Cosmos DB Gremlin adapter: vertex/edge labels and properties map 1:1, `graph_id` becomes the partition key, upserts use `fold().coalesce(unfold(), addV())`. Not implemented or claimed yet. |
-| Deployment adapters (Phase 4.4) | `LocalSqlAdapter`, `OxigraphAdapter`, `SparqlHttpAdapter` | A new target kind adds a capability profile, a catalogue entry (`graph/targets`) and an adapter with deploy + verify + read-back; Neo4j and Cosmos DB need a reachable server to be built and verified against. |
+| Deployment adapters (Phase 4.4) | `LocalSqlAdapter`, `OxigraphAdapter`, `SparqlHttpAdapter` (generic, GraphDB, Fuseki), `ExternalPropertyGraphAdapter` (Neo4j, Cosmos DB Gremlin) | A new provider adds a catalogue entry (`graph/targets/catalog.py`), a read-only probe, a capability profile and an adapter with deploy + verify + read-back; see [GRAPH_DATABASES.md](GRAPH_DATABASES.md). |

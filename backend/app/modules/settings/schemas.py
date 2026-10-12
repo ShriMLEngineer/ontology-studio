@@ -137,13 +137,44 @@ class LlmConfigRead(BaseModel):
 
 
 class GraphConnectionInput(BaseModel):
+    """Registration of a graph database. ``kind`` (alias ``provider``) selects the provider; the
+    provider's catalogue entry defines and validates ``config`` and the credential reference."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: Name
     kind: str
-    config: dict[str, Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]] = Field(default_factory=dict)
+    config: dict[str, str | int | float | bool] = Field(default_factory=dict)
     secret_env: EnvName | None = None
+    enabled: bool = True
     description: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)] = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _provider_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "provider" in data:
+            data = dict(data)
+            provider = data.pop("provider")
+            if data.get("kind") not in (None, provider):
+                raise ValueError("'provider' and 'kind' must match when both are given.")
+            data["kind"] = provider
+        return data
+
+
+class GraphCapabilities(BaseModel):
+    """What a registration can do, stated separately so a connection is never mistaken for deployment readiness."""
+
+    registered: bool = True
+    connection_supported: bool
+    connected: bool = Field(description="The last connection test succeeded")
+    read_supported: bool = Field(description="The Graph Explorer can read deployments back from this provider")
+    deployment_supported: bool = Field(description="The provider adapter can write and verify a build's projection")
+    write_configured: bool = Field(description="This registration allows writes (for example a SPARQL update endpoint)")
+    deployment_ready: bool = Field(description="Enabled, connected (where applicable), supported and writable")
+    deployment_verified: bool = Field(description="A deployment to this registration was written and read back successfully")
+    live_tested: bool = Field(description="The provider adapter was exercised against a real server of this provider")
+    verification_note: str = ""
+    last_deployment_at: datetime | None = None
 
 
 class GraphConnectionRead(BaseModel):
@@ -151,16 +182,34 @@ class GraphConnectionRead(BaseModel):
     name: str
     builtin: bool
     kind: str
+    provider: str
     kind_label: str
     model: str
+    protocol: str = ""
     config: dict[str, Any]
+    effective_endpoints: dict[str, str | None] = Field(default_factory=dict)
     secret_env: str | None
     secret_present: bool | None
     description: str
+    enabled: bool = True
+    is_default: bool = False
+    status: Literal["not_tested", "connected", "failed"] = "not_tested"
+    capabilities: GraphCapabilities
+    deployment_count: int = 0
     last_test: ConnectionTest | None
     used_by_projects: list[str]
     updated_by: str = ""
     updated_at: datetime | None = None
+
+
+class FieldOptionRead(BaseModel):
+    value: str
+    label: str
+
+
+class VisibleWhenRead(BaseModel):
+    field: str
+    values: list[str]
 
 
 class ConfigFieldRead(BaseModel):
@@ -169,6 +218,13 @@ class ConfigFieldRead(BaseModel):
     required: bool
     secret: bool
     placeholder: str
+    type: str = "text"
+    default: str = ""
+    options: list[FieldOptionRead] = Field(default_factory=list)
+    help: str = ""
+    visible_when: VisibleWhenRead | None = None
+    minimum: float | None = None
+    maximum: float | None = None
 
 
 class GraphKindRead(BaseModel):
@@ -180,7 +236,18 @@ class GraphKindRead(BaseModel):
     available: bool
     description: str
     unavailable_reason: str
+    protocol: str = ""
+    connection_supported: bool = True
+    read_supported: bool = False
+    deployment_supported: bool = False
+    live_tested: bool = False
+    verification_note: str = ""
     fields: list[ConfigFieldRead]
+
+
+class GraphActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
 
 
 # ---------------------------------------------------------------------------------- project defaults

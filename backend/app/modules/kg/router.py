@@ -99,6 +99,7 @@ class BuildResources:
                 "id": graph.id,
                 "name": graph.name,
                 "kind": graph.kind,
+                "provider": graph.provider,
                 "model": graph.model,
                 "config": graph.config,
                 "secret_env": graph.secret_env,

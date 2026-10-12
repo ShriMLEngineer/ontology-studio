@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Immutable published ontology artifacts (JSON / Turtle).
     artifact_dir: Path = DEFAULT_DATA_DIR / "artifacts"
     oxigraph_dir: Path = DEFAULT_DATA_DIR / "oxigraph"
+    # Self-hosted graph databases on loopback/private addresses are an expected development setup.
+    # Set false on a shared server so registered endpoints cannot reach internal networks.
+    graph_allow_private_networks: bool = True
 
     # OpenAI-compatible LLM endpoint (OpenAI, Azure OpenAI v1, Ollama, vLLM, LM Studio, ...).
     # Discovery is disabled until base URL and model are configured.

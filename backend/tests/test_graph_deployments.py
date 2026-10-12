@@ -240,16 +240,22 @@ def test_compatibility_reports_per_target_and_mapping(seeded_client: TestClient)
     assert deployed["status"] == "completed" and set(deployed["graphs"]) == {"data", "provenance"}
 
     neo4j = seeded_client.get(url, params={"kind": "neo4j"}).json()
-    assert neo4j["adapter_available"] is False and neo4j["report"]["capability_profile_verified"] is False
+    assert neo4j["adapter_available"] is True and neo4j["report"]["capability_profile_verified"] is True, (
+        "the Neo4j adapter was verified against a live Neo4j AuraDB instance"
+    )
+    cosmos = seeded_client.get(url, params={"kind": "cosmos-gremlin"}).json()
+    assert cosmos["adapter_available"] is True and cosmos["report"]["capability_profile_verified"] is False, (
+        "Cosmos DB has an adapter but was never run against a live account, and the report says so"
+    )
 
     wrong = seeded_client.get(url, params={"target_id": OXIGRAPH, "mapping_profile": "lpg-default/1"})
     assert wrong.status_code == 422 and error_code(wrong) == "MAPPING_PROFILE_INCOMPATIBLE"
-    assert _deploy(seeded_client, build["id"], "neo4j").status_code == 404
+    assert _deploy(seeded_client, build["id"], "neo4j").status_code == 404, "a provider id is not a registered target"
 
     catalogue = seeded_client.get("/api/kg/graph-capabilities").json()
     assert {p["target_kind"] for p in catalogue["profiles"]} == set(PROFILES)
     assert {m["id"] for m in catalogue["mapping_profiles"]} == set(MAPPING_PROFILES)
-    assert {p["target_kind"]: p["adapter_available"] for p in catalogue["profiles"]}["cosmos-gremlin"] is False
+    assert all(p["adapter_available"] for p in catalogue["profiles"])
 
 
 def test_semantic_loss_requires_acknowledgement(seeded_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

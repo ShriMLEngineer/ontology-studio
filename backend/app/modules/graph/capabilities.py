@@ -66,20 +66,50 @@ PROFILES: dict[str, CapabilityProfile] = {
             ),
         ),
         CapabilityProfile(
-            id="neo4j", version=1, target_kind="neo4j", label="Neo4j 5 (assumed, no adapter)",
+            id="graphdb", version=1, target_kind="graphdb", label="Ontotext GraphDB (SPARQL 1.1)",
+            data_model="rdf", query_languages=("SPARQL 1.1",), multi_typing="rdf:type", named_graphs=True,
+            language_tags=True, typed_literals=True, multi_valued_properties=True,
+            statement_metadata="companion-graph", stores_ontology=True, reasoning="store-specific (not assumed)",
+            native_shacl=False, verified=False,
+            notes=(
+                "Deployed through the generic SPARQL 1.1 adapter (verified against the Oxigraph SPARQL server); not "
+                "yet run against a live GraphDB. GraphDB's reasoning and SHACL features are not relied upon.",
+            ),
+        ),
+        CapabilityProfile(
+            id="fuseki", version=1, target_kind="fuseki", label="Apache Jena Fuseki (SPARQL 1.1)",
+            data_model="rdf", query_languages=("SPARQL 1.1",), multi_typing="rdf:type", named_graphs=True,
+            language_tags=True, typed_literals=True, multi_valued_properties=True,
+            statement_metadata="companion-graph", stores_ontology=True, reasoning="none",
+            native_shacl=False, verified=False,
+            notes=(
+                "Deployed through the generic SPARQL 1.1 adapter (verified against the Oxigraph SPARQL server); not "
+                "yet run against a live Fuseki server. The dataset must allow SPARQL update and named graphs.",
+            ),
+        ),
+        CapabilityProfile(
+            id="neo4j", version=2, target_kind="neo4j", label="Neo4j / AuraDB",
             data_model="property-graph", query_languages=("Cypher",), multi_typing="multiple-labels",
             named_graphs=False, language_tags=False, typed_literals=True, multi_valued_properties=True,
             statement_metadata="edge-properties", stores_ontology=False, reasoning="none", native_shacl=False,
-            verified=False,
-            notes=("Lists must be homogeneous; constraints depend on the edition.",),
+            verified=True,
+            notes=(
+                "Deployed and read back with the official driver; verified against Neo4j AuraDB 5.27. Nodes carry the "
+                "class label plus an OlsVertex marker label; every element is scoped by the build id.",
+                "Lists must be homogeneous: mixed numeric lists are stored as floats and other mixed lists as strings.",
+            ),
         ),
         CapabilityProfile(
-            id="cosmos-gremlin", version=1, target_kind="cosmos-gremlin", label="Azure Cosmos DB Gremlin (assumed, no adapter)",
+            id="cosmos-gremlin", version=2, target_kind="cosmos-gremlin", label="Azure Cosmos DB for Apache Gremlin",
             data_model="property-graph", query_languages=("Gremlin",), multi_typing="single-label",
             named_graphs=False, language_tags=False, typed_literals=True, multi_valued_properties=True,
             statement_metadata="edge-properties", stores_ontology=False, reasoning="none", native_shacl=False,
             verified=False,
-            notes=("Requires a partition key; supported Gremlin steps are a subset of TinkerPop.",),
+            notes=(
+                "Implemented to Microsoft's documented client settings and unit-tested with a scripted client; not run "
+                "against a live account. A build is written under one partition-key value.",
+                "Multi-valued attributes are kept exactly in a JSON property; single-valued ones are also plain properties.",
+            ),
         ),
     )
 }

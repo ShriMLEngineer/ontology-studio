@@ -248,5 +248,8 @@ class KgGraphDeployment(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     origin: Mapped[str] = mapped_column(String(16), nullable=False)
     requested_by: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    # Non-secret connection settings the deployment was written with (provider, config, credential
+    # *name*), so editing a registration later never redirects reads of historical deployments.
+    target_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

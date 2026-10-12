@@ -148,15 +148,14 @@ try {
     await shot('01-deployments')
   })
 
-  await step('Compatibility preview for a kind without adapter is labelled as an assumption', async () => {
-    await page.getByText('Compatibility preview for targets without an adapter').click()
-    await page.getByLabel('Preview kind').selectOption('neo4j')
-    const preview = page.getByTestId('compatibility-report').nth(1)
-    await preview.getByText('documented assumption, not verified').waitFor()
-    await preview.getByText('Class membership').waitFor()
+  await step('Deploy panel states the target\'s capabilities; unregistered providers are not deployment targets', async () => {
+    const status = page.getByTestId('deploy-target-status')
+    await status.waitFor()
+    const text = await status.textContent()
+    expect(text.includes('Registered') && text.includes('Deployment supported'), `capabilities shown: ${text}`)
     expect(
       !(await page.getByTestId('deploy-target').locator('option', { hasText: 'Neo4j' }).count()),
-      'Neo4j is not offered as a deployment target',
+      'Neo4j is not offered as a deployment target until it is registered',
     )
   })
 
@@ -177,7 +176,8 @@ try {
     await page.goto(`${BASE_URL}/projects/${project.id}/settings`)
     await page.getByRole('button', { name: 'Register database' }).click()
     const dialog = page.getByTestId('graph-dialog')
-    await dialog.getByLabel('Name', { exact: true }).fill('Oxigraph SPARQL server')
+    await dialog.getByLabel('Graph database provider').selectOption('sparql-http')
+    await dialog.getByLabel('Configuration name').fill('Oxigraph SPARQL server')
     await dialog.getByLabel('Query endpoint URL').fill(`${serverUrl}/query`)
     await dialog.getByLabel('Update endpoint URL (required to deploy)').fill(`${serverUrl}/update`)
     await dialog.getByRole('button', { name: 'Save' }).click()

@@ -511,9 +511,9 @@ NULL defaults, i.e. the built-ins).
 **Decision.** The database stores only the *name* of the environment variable that holds an API key
 or password; values are read when a connection is opened and are never returned by the API.
 Connection tests perform real, side-effect-free calls (`/models`, `SELECT count(*)`, opening the
-embedded store, SPARQL `ASK`). Graph database kinds without a verified adapter (Neo4j, Cosmos DB
-Gremlin) are listed as unavailable with the reason and cannot be registered; no integration is
-simulated. Configuration changes are written to the server log and recorded on the record
+embedded store, SPARQL `ASK`, Neo4j driver connectivity, a read-only Gremlin traversal). Providers are
+described in a catalogue (ADR-054); a provider's connection test, deployment adapter and live
+verification are stated separately and no integration is simulated. Configuration changes are written to the server log and recorded on the record
 (`updated_by`, `updated_at`); project default changes are project activity events.
 
 ## ADR-047 The local SQL graph stays canonical; other stores receive verified deployments
@@ -529,8 +529,8 @@ canonical graph, the facts and their provenance are unaffected.
 explorer can read any verified deployment back, which proves what the target holds rather than
 what was sent. Deployment records live in Knowledge Graph Studio, not in the ontology registry
 (D6). For D8 the embedded Oxigraph (pyoxigraph) and an Oxigraph SPARQL 1.1 server (the `oxigraph`
-CLI, a development dependency used by the integration tests and `npm run e2e:graphs`) were used;
-no Neo4j or Cosmos DB server was available, so those adapters are not built.
+CLI, a development dependency used by the integration tests and `npm run e2e:graphs`) were used.
+Neo4j and Cosmos DB adapters were added later (ADR-054).
 
 ## ADR-048 Provenance travels in a companion named graph, not RDF-star
 **Status:** Accepted (Phase 4.4)
@@ -595,3 +595,32 @@ informational and never blocks publication (D11).
 
 **Consequences.** Imports already reject malformed SHACL; the gate is defence in depth for data that
 reaches the draft by other paths, so knowledge-graph builds can rely on every published shapes graph.
+
+## ADR-054 Graph databases are provider-catalogue entries with separate capability facts
+**Status:** Accepted (graph registry upgrade; extends ADR-046, ADR-047)
+
+**Context.** The registry knew one registrable kind (generic SPARQL) and listed Neo4j and Cosmos DB as
+unavailable. Users need Neo4j/AuraDB, Cosmos DB Gremlin, GraphDB, Fuseki and generic SPARQL, and a
+connection that merely answers must never be shown as a deployment-ready one.
+
+**Decision.** (1) One catalogue entry per provider (`graph/targets/catalog.py`) defines the form fields
+(typed, with conditional visibility), validation, graph model, protocol and capability flags; the API,
+the Settings form and Knowledge Graph Studio are generated from it, so a new provider (TigerGraph) is a
+catalogue entry plus a probe and an adapter. `kind` remains the stored provider id, so existing
+registrations and historical deployments are untouched. (2) *Registered*, *Connected*, *Deployment
+supported*, *Deployment verified* and *adapter live-tested* are reported separately; deployment support
+also depends on the registration (a SPARQL registration without an update endpoint is read-only), and
+*live-tested* is only set for adapters that were run against a real server. (3) GraphDB and Fuseki reuse
+the SPARQL adapter and differ only in configuration and authentication; Azure-hosted GraphDB is GraphDB.
+(4) Neo4j and Cosmos DB stores implement the existing `GraphStore` read protocol and write by replacing a
+build's scope (build id), confined by a marker label and scope property (Neo4j) or the partition key
+(Cosmos), so the Explorer is adapter independent and a deployment can never touch other data. (5) Every
+connection is checked by an endpoint policy with DNS resolution; metadata and link-local addresses are
+always refused, public hosts need TLS, private networks are allowed unless configured otherwise.
+(6) A deployment stores a snapshot of its non-secret connection settings and reads use it, so editing or
+deleting a registration never redirects history. A registered default only preselects the database for new
+projects; existing projects are never retargeted.
+
+**Consequences.** Cosmos DB, GraphDB and Fuseki are implemented but labelled unverified until run against
+live servers; Neo4j was verified against AuraDB 5.27. Registry edits cannot repair a deployment whose
+recorded credential variable no longer exists - re-deploy to record the new settings.

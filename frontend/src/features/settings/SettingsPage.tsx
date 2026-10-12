@@ -31,17 +31,27 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { errorMessage } from '@/lib/api/client'
 import { projectsApi, settingsApi } from '@/lib/api/endpoints'
-import type { ConnectionTest, GraphConnection, GraphConnectionInput, GraphKind, LlmConfig, LlmConfigInput } from '@/lib/api/types'
+import type {
+  ConnectionTest,
+  GraphConnection,
+  GraphConnectionInput,
+  GraphKind,
+  GraphKindField,
+  LlmConfig,
+  LlmConfigInput,
+} from '@/lib/api/types'
 import { relativeTime } from '@/lib/format'
 import { NativeSelect } from '@/features/kg/fields'
 import { useReviewerName } from '@/features/ontology/governance/reviewer'
 import { useProjectScope } from '@/features/projects/hooks'
+import { GraphCapabilityChips, GraphStatusBadge } from './GraphCapabilities'
 import { useGraphConnections, useGraphKinds, useLlmConfigs, useProjectDefaults } from './hooks'
 import { GraphTargetSelect, LlmConfigSelect } from './selectors'
 
@@ -608,6 +618,11 @@ function LlmCard() {
 
 // ------------------------------------------------------------------------------------ graph connections
 
+/** Initial values of a provider's form: every visible-by-default, non-secret field with a catalogue default. */
+function defaultsOf(kind: GraphKind | undefined): Record<string, string> {
+  return Object.fromEntries((kind?.fields ?? []).filter((f) => !f.secret && f.default).map((f) => [f.key, f.default]))
+}
+
 function GraphDialog({
   kinds,
   initial,
@@ -624,25 +639,40 @@ function GraphDialog({
   error: unknown
 }) {
   const registrable = kinds.filter((k) => k.registrable && k.available)
-  const [value, setValue] = useState<GraphConnectionInput>(initial.kind ? initial : { ...initial, kind: registrable[0]?.id ?? '' })
+  const [value, setValue] = useState<GraphConnectionInput>(() =>
+    initial.kind ? initial : { ...initial, kind: registrable[0]?.id ?? '', config: defaultsOf(registrable[0]) },
+  )
   const kind = kinds.find((k) => k.id === value.kind)
   const set = (patch: Partial<GraphConnectionInput>) => setValue((v) => ({ ...v, ...patch }))
-  const secretProblem = envNameProblem(value.secret_env)
+  const setField = (key: string, fieldValue: string) => setValue((v) => ({ ...v, config: { ...v.config, [key]: fieldValue } }))
+  const selectProvider = (id: string) =>
+    setValue((v) => ({ ...v, kind: id, config: defaultsOf(kinds.find((k) => k.id === id)), secret_env: '' }))
+  const visible = (f: GraphKindField) => !f.visible_when || f.visible_when.values.includes(value.config[f.visible_when.field] ?? '')
+  const shown = (kind?.fields ?? []).filter(visible)
+  const secretField = shown.find((f) => f.secret)
+  const secretProblem = secretField ? envNameProblem(value.secret_env) : null
   const valid =
-    value.name.trim() && kind && !secretProblem && kind.fields.every((f) => f.secret || !f.required || value.config[f.key]?.trim())
+    value.name.trim() &&
+    kind &&
+    !secretProblem &&
+    shown.every((f) => !f.required || (f.secret ? Boolean(value.secret_env?.trim()) : Boolean(value.config[f.key]?.trim())))
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg" data-testid="graph-dialog">
+      <DialogContent className="sm:max-h-[90vh] sm:max-w-lg overflow-y-auto" data-testid="graph-dialog">
         <DialogHeader>
           <DialogTitle>{initial.name ? `Edit ${initial.name}` : 'Register a graph database'}</DialogTitle>
-          <DialogDescription>Passwords stay on the server: enter the name of the environment variable that holds it.</DialogDescription>
+          <DialogDescription>
+            Choose a provider; its connection fields appear below. Credentials stay on the server: enter the name of the
+            environment variable that holds them, never the secret itself. Testing verifies connectivity and authentication
+            only, not write permission.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
-          <Field id="graph-name" label="Name">
+          <Field id="graph-name" label="Configuration name">
             <Input id="graph-name" value={value.name} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <Field id="graph-kind" label="Database kind" hint={kind?.description}>
-            <NativeSelect id="graph-kind" value={value.kind} disabled={Boolean(initial.name)} onChange={(e) => set({ kind: e.target.value, config: {} })}>
+          <Field id="graph-kind" label="Graph database provider">
+            <NativeSelect id="graph-kind" value={value.kind} disabled={Boolean(initial.name)} onChange={(e) => selectProvider(e.target.value)}>
               {registrable.map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.label}
@@ -650,34 +680,76 @@ function GraphDialog({
               ))}
             </NativeSelect>
           </Field>
-          {kind?.fields.map((f) =>
-            f.secret ? (
-              <Field key={f.key} id={`graph-${f.key}`} label={f.label} error={secretProblem}>
+          {kind && (
+            <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-xs" data-testid="provider-summary">
+              <p>{kind.description}</p>
+              <p>
+                <span className="font-medium">Graph data model:</span> {kind.model === 'rdf' ? 'RDF graph' : 'Property graph'}
+                {' · '}
+                <span className="font-medium">Protocol:</span> {kind.protocol}
+              </p>
+              <p className={kind.live_tested ? 'text-emerald-700' : 'text-amber-700'}>
+                {kind.live_tested ? 'Adapter verified against a live server. ' : 'Adapter not yet verified against a live server. '}
+                {kind.verification_note}
+              </p>
+            </div>
+          )}
+          {shown.map((f) => {
+            const id = `graph-${f.key}`
+            const label = `${f.label}${f.required ? '' : ' (optional)'}`
+            if (f.secret) {
+              return (
+                <Field key={f.key} id={id} label={label} hint={f.help} error={secretProblem}>
+                  <Input
+                    id={id}
+                    className="font-mono text-xs"
+                    placeholder={f.placeholder}
+                    autoComplete="off"
+                    aria-invalid={Boolean(secretProblem)}
+                    value={value.secret_env ?? ''}
+                    onChange={(e) => set({ secret_env: e.target.value })}
+                  />
+                </Field>
+              )
+            }
+            if (f.type === 'select') {
+              return (
+                <Field key={f.key} id={id} label={label}>
+                  <NativeSelect id={id} value={value.config[f.key] ?? f.default} onChange={(e) => setField(f.key, e.target.value)}>
+                    {f.options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+              )
+            }
+            const numeric = f.type === 'number' || f.type === 'integer'
+            return (
+              <Field key={f.key} id={id} label={label} hint={f.help}>
                 <Input
-                  id={`graph-${f.key}`}
+                  id={id}
                   className="font-mono text-xs"
+                  type={numeric ? 'number' : 'text'}
+                  min={f.minimum ?? undefined}
+                  max={f.maximum ?? undefined}
+                  step={f.type === 'integer' ? 1 : undefined}
                   placeholder={f.placeholder}
                   autoComplete="off"
-                  aria-invalid={Boolean(secretProblem)}
-                  value={value.secret_env ?? ''}
-                  onChange={(e) => set({ secret_env: e.target.value })}
-                />
-              </Field>
-            ) : (
-              <Field key={f.key} id={`graph-${f.key}`} label={`${f.label}${f.required ? '' : ' (optional)'}`}>
-                <Input
-                  id={`graph-${f.key}`}
-                  className="font-mono text-xs"
-                  placeholder={f.placeholder}
                   value={value.config[f.key] ?? ''}
-                  onChange={(e) => set({ config: { ...value.config, [f.key]: e.target.value } })}
+                  onChange={(e) => setField(f.key, e.target.value)}
                 />
               </Field>
-            ),
-          )}
-          <Field id="graph-description" label="Description">
+            )
+          })}
+          <Field id="graph-description" label="Description (optional)">
             <Textarea id="graph-description" rows={2} value={value.description} onChange={(e) => set({ description: e.target.value })} />
           </Field>
+          <label className="flex items-center gap-2 text-xs">
+            <Checkbox checked={value.enabled} onCheckedChange={(checked) => set({ enabled: checked === true })} aria-label="Enabled" />
+            Enabled (selectable for projects and deployments)
+          </label>
         </div>
         {Boolean(error) && (
           <Alert variant="destructive">
@@ -693,8 +765,10 @@ function GraphDialog({
             onClick={() =>
               onSave({
                 ...value,
-                config: Object.fromEntries(Object.entries(value.config).filter(([, v]) => v.trim())),
-                secret_env: value.secret_env?.trim() || null,
+                config: Object.fromEntries(
+                  shown.filter((f) => !f.secret).map((f) => [f.key, (value.config[f.key] ?? '').trim()] as const).filter(([, v]) => v),
+                ),
+                secret_env: secretField ? value.secret_env?.trim() || null : null,
               })
             }
           >
@@ -742,6 +816,22 @@ function GraphCard() {
     onError: (error) => toast.error('Cannot delete', { description: errorMessage(error) }),
     onSettled: () => setDeleting(null),
   })
+  const activation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => settingsApi.setGraphEnabled(id, enabled, reviewer),
+    onSuccess: (connection) => {
+      toast.success(`${connection.name} ${connection.enabled ? 'enabled' : 'disabled'}`)
+      refresh()
+    },
+    onError: (error) => toast.error('Cannot change activation', { description: errorMessage(error) }),
+  })
+  const makeDefault = useMutation({
+    mutationFn: (id: string) => settingsApi.setDefaultGraph(id, reviewer),
+    onSuccess: (connection) => {
+      toast.success(`${connection.name} is now preselected for new projects`, { description: 'Existing projects are unchanged.' })
+      refresh()
+    },
+    onError: (error) => toast.error('Cannot set the default', { description: errorMessage(error) }),
+  })
   const unavailable = (kinds.data ?? []).filter((k) => !k.available)
   return (
     <Card data-testid="graph-connections">
@@ -750,7 +840,10 @@ function GraphCard() {
           <CardTitle className="flex items-center gap-2">
             <Database className="size-4" /> Graph databases
           </CardTitle>
-          <CardDescription>Targets for knowledge-graph deployment. Tests are read-only.</CardDescription>
+          <CardDescription>
+            Targets for knowledge-graph deployment. Test Connection runs a read-only, provider-specific check on the server and
+            verifies connectivity and authentication, not write permission or deployment readiness.
+          </CardDescription>
         </div>
         <Button size="sm" onClick={() => setEditing('new')} disabled={!reviewer || !kinds.data} title={reviewer ? undefined : 'Set your reviewer name first'}>
           <Plus /> Register database
@@ -764,15 +857,34 @@ function GraphCard() {
         ) : (
           <ul className="space-y-2">
             {connections.data.map((c) => (
-              <li key={c.id} className="rounded-lg border p-3 text-sm" data-testid="graph-row">
+              <li key={c.id} className="rounded-lg border p-3 text-sm" data-testid="graph-row" data-provider={c.provider} data-status={c.status}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{c.name}</span>
-                  <Badge variant="outline">{c.model === 'rdf' ? 'RDF' : 'Property graph'}</Badge>
+                  <Badge variant="outline">{c.kind_label}</Badge>
+                  <Badge variant="outline">{c.model === 'rdf' ? 'RDF graph' : 'Property graph'}</Badge>
                   {c.builtin && <Badge variant="secondary">Built-in</Badge>}
-                  <div className="ml-auto flex gap-1">
+                  {c.is_default && <Badge variant="secondary">Default for new projects</Badge>}
+                  {!c.enabled && <Badge variant="outline">Disabled</Badge>}
+                  <GraphStatusBadge status={c.status} />
+                  <div className="ml-auto flex flex-wrap gap-1">
                     <Button variant="outline" size="xs" onClick={() => test.mutate(c.id)} disabled={test.isPending && test.variables === c.id}>
                       {test.isPending && test.variables === c.id ? <Loader2 className="animate-spin" /> : <PlugZap />} Test
                     </Button>
+                    {!c.builtin && (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => activation.mutate({ id: c.id, enabled: !c.enabled })}
+                        disabled={!reviewer || activation.isPending}
+                      >
+                        {c.enabled ? 'Disable' : 'Enable'}
+                      </Button>
+                    )}
+                    {!c.is_default && c.id !== 'oxigraph-embedded' && c.enabled && (
+                      <Button variant="outline" size="xs" onClick={() => makeDefault.mutate(c.id)} disabled={!reviewer || makeDefault.isPending}>
+                        Set default
+                      </Button>
+                    )}
                     {!c.builtin && (
                       <>
                         <Button variant="ghost" size="icon-sm" aria-label={`Edit ${c.name}`} onClick={() => setEditing(c)} disabled={!reviewer}>
@@ -786,25 +898,39 @@ function GraphCard() {
                   </div>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {c.kind_label}
+                  {c.protocol}
                   {Object.entries(c.config).map(([k, v]) => (
                     <span key={k} className="block font-mono break-all">
                       {k}: {v}
                     </span>
                   ))}
+                  {Object.entries(c.effective_endpoints)
+                    .filter(([k]) => !(`${k}_url` in c.config))
+                    .map(([k, v]) => (
+                      <span key={k} className="block font-mono break-all">
+                        {k} endpoint: {v ?? 'none (read-only)'}
+                      </span>
+                    ))}
                 </p>
                 {c.secret_env && (
                   <p className="mt-1 flex items-center gap-1 text-xs">
-                    <KeyRound className="size-3" /> Password from <span className="font-mono">{c.secret_env}</span>
+                    <KeyRound className="size-3" /> Credential from <span className="font-mono">{c.secret_env}</span>
                     {c.secret_present ? ' (set on the server)' : ' (not set on the server)'}
                   </p>
                 )}
                 {c.used_by_projects.length > 0 && (
                   <p className="mt-1 text-xs text-muted-foreground">Default of: {c.used_by_projects.join(', ')}</p>
                 )}
+                <GraphCapabilityChips connection={c} />
                 <div className="mt-1.5">
                   <TestResult test={c.last_test} />
                 </div>
+                {c.capabilities.deployment_verified && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {c.deployment_count} deployment{c.deployment_count === 1 ? '' : 's'} recorded
+                    {c.capabilities.last_deployment_at ? ` · last verified ${relativeTime(c.capabilities.last_deployment_at)}` : ''}.
+                  </p>
+                )}
               </li>
             ))}
           </ul>
@@ -827,8 +953,15 @@ function GraphCard() {
           kinds={kinds.data}
           initial={
             editing === 'new'
-              ? { name: '', kind: '', config: {}, secret_env: '', description: '' }
-              : { name: editing.name, kind: editing.kind, config: editing.config, secret_env: editing.secret_env ?? '', description: editing.description }
+              ? { name: '', kind: '', config: {}, secret_env: '', enabled: true, description: '' }
+              : {
+                  name: editing.name,
+                  kind: editing.kind,
+                  config: editing.config,
+                  secret_env: editing.secret_env ?? '',
+                  enabled: editing.enabled,
+                  description: editing.description,
+                }
           }
           onClose={() => {
             setEditing(null)
@@ -844,7 +977,9 @@ function GraphCard() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{deleting?.name}"?</AlertDialogTitle>
             <AlertDialogDescription>
-              Data already deployed to the database is not removed. A connection that is a project default cannot be deleted.
+              Data already deployed to the database is not removed, and its {deleting?.deployment_count ?? 0} recorded
+              deployment(s) stay readable through the settings they were written with. A connection that is a project default
+              cannot be deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

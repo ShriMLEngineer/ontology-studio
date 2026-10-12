@@ -18,6 +18,7 @@ from pyoxigraph import Literal as OxLiteral
 from rdflib import BNode, Graph
 
 from app.core.errors import BusinessRuleError, UnavailableError
+from app.core.net_safety import EndpointError, assert_url_reachable_target
 from app.modules.graph.projection import PropertyGraphProjection, RdfProjection
 from app.modules.graph.sparql import (
     MAX_ROWS,
@@ -28,14 +29,13 @@ from app.modules.graph.sparql import (
     triples_result,
 )
 from app.modules.graph.store import GraphStore
-from app.modules.graph.targets import oxigraph_store, sparql_auth
+from app.modules.graph.targets import oxigraph_store, resolve_auth
+from app.modules.graph.targets.catalog import KINDS, sparql_endpoints
+from app.modules.graph.targets.errors import DeploymentError
+from app.modules.graph.targets.property_graph import PropertyTarget, property_graph_store
 
 INSERT_CHUNK = 2000
 _IRI_FORBIDDEN = re.compile(r'[\s<>"{}|^`\\]')
-
-
-class DeploymentError(RuntimeError):
-    """A target rejected or failed a deployment; the message is shown to the user."""
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class TargetSpec:
     kind: str
     config: dict[str, Any] = field(default_factory=dict)
     secret_env: str | None = None
+    allow_private: bool = True
 
 
 @dataclass
@@ -86,6 +87,41 @@ class LocalSqlAdapter:
             expected={"vertices": len(projection.vertices), "edges": len(projection.edges)},
             verified={"vertices": vertices, "edges": edges},
         )
+
+
+class ExternalPropertyGraphAdapter:
+    """Neo4j or Azure Cosmos DB Gremlin: the build's scope is replaced, then the counts are read back."""
+
+    def __init__(self, spec: TargetSpec) -> None:
+        self.spec = spec
+        self.store = property_graph_store(
+            PropertyTarget(spec.kind, dict(spec.config), spec.secret_env, spec.allow_private)
+        )
+
+    def deploy_property_graph(self, build_id: str, projection: PropertyGraphProjection) -> DeployResult:
+        try:
+            self.store.replace_scope(build_id, projection.vertices, projection.edges)
+            vertices, edges = self.store.counts(build_id)
+        except DeploymentError:
+            try:  # never leave a half-written scope behind a failed deployment
+                self.store.clear_scope(build_id)
+            except DeploymentError:
+                pass
+            raise
+        target = {k: str(v) for k, v in self.spec.config.items() if k in ("database", "graph")}
+        return DeployResult(
+            graphs={"graph_id": build_id, **target},
+            expected={"vertices": len(projection.vertices), "edges": len(projection.edges)},
+            verified={"vertices": vertices, "edges": edges},
+        )
+
+
+def property_graph_adapter(spec: TargetSpec, sql_store: GraphStore) -> LocalSqlAdapter | ExternalPropertyGraphAdapter:
+    if spec.kind == "local-sql":
+        return LocalSqlAdapter(sql_store)
+    if spec.kind in ("neo4j", "cosmos-gremlin"):
+        return ExternalPropertyGraphAdapter(spec)
+    raise BusinessRuleError(f"'{spec.name}' ({spec.kind}) is not a property-graph target.", code="GRAPH_TARGET_NOT_PROPERTY_GRAPH")
 
 
 # ---------------------------------------------------------------------------------- RDF
@@ -178,25 +214,30 @@ class OxigraphAdapter:
 
 
 class SparqlHttpAdapter:
-    """Any SPARQL 1.1 Protocol endpoint: CLEAR + INSERT DATA over the update endpoint, queries over the query endpoint."""
+    """Any SPARQL 1.1 Protocol endpoint (generic, Fuseki, GraphDB): CLEAR + INSERT DATA over the update
+    endpoint, queries over the query endpoint."""
 
-    def __init__(self, config: dict[str, Any], secret_env: str | None, timeout: float = 60.0) -> None:
-        self.query_url = (config.get("query_url") or "").strip()
-        self.update_url = (config.get("update_url") or "").strip()
-        self.auth = sparql_auth(config, secret_env)
+    def __init__(self, spec: TargetSpec, timeout: float = 60.0) -> None:
+        self.query_url, update_url = sparql_endpoints(spec.kind, spec.config)
+        self.update_url = update_url or ""
+        self.auth, self.headers = resolve_auth(spec.config, spec.secret_env)
+        self.allow_private = spec.allow_private
         self.timeout = timeout
         if not self.query_url:
             raise DeploymentError("The connection has no query endpoint URL.")
 
     def _client(self) -> httpx2.Client:
-        return httpx2.Client(timeout=self.timeout, auth=self.auth)
+        return httpx2.Client(timeout=self.timeout, auth=self.auth, headers=self.headers)
 
     def _post(self, url: str, data: dict[str, Any], accept: str) -> httpx2.Response:
         try:
+            assert_url_reachable_target(url, allow_private=self.allow_private)
             with self._client() as client:
                 return client.post(url, data=data, headers={"Accept": accept})
+        except EndpointError as error:
+            raise DeploymentError(str(error)) from error
         except httpx2.HTTPError as error:
-            raise DeploymentError(f"SPARQL endpoint unreachable: {error.__class__.__name__}: {error}"[:400]) from error
+            raise DeploymentError(f"SPARQL endpoint unreachable ({error.__class__.__name__}).") from error
 
     def _update(self, text: str) -> None:
         response = self._post(self.update_url, {"update": text}, "*/*")
@@ -275,8 +316,9 @@ def rdf_adapter(spec: TargetSpec, oxigraph_dir: Path) -> OxigraphAdapter | Sparq
     if spec.kind == "oxigraph":
         # The built-in store always lives at the configured server path; stored paths are not trusted.
         return OxigraphAdapter(oxigraph_dir)
-    if spec.kind == "sparql-http":
-        return SparqlHttpAdapter(spec.config, spec.secret_env)
+    kind = KINDS.get(spec.kind)
+    if kind is not None and kind.family == "sparql":
+        return SparqlHttpAdapter(spec)
     raise BusinessRuleError(f"'{spec.name}' ({spec.kind}) is not an RDF target.", code="GRAPH_TARGET_NOT_RDF")
 
 

@@ -25,7 +25,15 @@ from app.modules.graph.targets import (
     ConnectionResult,
     check_local_sql,
     check_oxigraph,
-    check_sparql_http,
+    check_sparql,
+)
+from app.modules.graph.targets.catalog import (
+    REGISTRATION_ORDER,
+    TargetKind,
+    display_config,
+    is_writable,
+    normalize_config,
+    sparql_endpoints,
 )
 from app.modules.llm.provider import LLMProvider
 from app.modules.llm.providers import build_registered_provider, provider_snapshot
@@ -34,6 +42,8 @@ from app.modules.settings.models import GraphConnection, LlmConfiguration
 from app.modules.settings.schemas import (
     ConfigFieldRead,
     ConnectionTest,
+    FieldOptionRead,
+    GraphCapabilities,
     GraphConnectionInput,
     GraphConnectionRead,
     GraphKindRead,
@@ -41,6 +51,7 @@ from app.modules.settings.schemas import (
     LlmConfigRead,
     ProjectDefaults,
     ProjectDefaultsUpdate,
+    VisibleWhenRead,
 )
 
 ENV_DEFAULT_LLM = "env-default"
@@ -392,58 +403,131 @@ class SettingsService:
 
     # ------------------------------------------------------------------------------ graph connections
 
+    @property
+    def _allow_private(self) -> bool:
+        return self.settings.graph_allow_private_networks
+
     def kinds(self) -> list[GraphKindRead]:
-        return [
-            GraphKindRead(
-                id=k.id,
-                label=k.label,
-                model=k.model,
-                builtin=k.builtin,
-                registrable=k.registrable,
-                available=k.available,
-                description=k.description,
-                unavailable_reason=k.unavailable_reason,
-                fields=[ConfigFieldRead(**f.__dict__) for f in k.fields],
+        """The provider catalogue: registrable providers in dropdown order, then built-in targets."""
+        ordered = [KINDS[i] for i in REGISTRATION_ORDER if i in KINDS]
+        ordered += [k for k in KINDS.values() if k.id not in REGISTRATION_ORDER]
+        return [self._kind_read(k) for k in ordered]
+
+    @staticmethod
+    def _field_read(spec: Any) -> ConfigFieldRead:
+        return ConfigFieldRead(
+            key=spec.key, label=spec.label, required=spec.required, secret=spec.secret, placeholder=spec.placeholder,
+            type=spec.type, default=spec.default, help=spec.help, minimum=spec.minimum, maximum=spec.maximum,
+            options=[FieldOptionRead(value=v, label=label) for v, label in spec.options],
+            visible_when=(
+                VisibleWhenRead(field=spec.visible_when[0], values=list(spec.visible_when[1]))
+                if spec.visible_when else None
+            ),
+        )
+
+    def _kind_read(self, k: TargetKind) -> GraphKindRead:
+        return GraphKindRead(
+            id=k.id, label=k.label, model=k.model, builtin=k.builtin, registrable=k.registrable, available=k.available,
+            description=k.description, unavailable_reason=k.unavailable_reason, protocol=k.protocol,
+            connection_supported=k.available, read_supported=k.read_supported,
+            deployment_supported=k.deployment_supported, live_tested=k.live_tested,
+            verification_note=k.verification_note, fields=[self._field_read(f) for f in k.fields],
+        )
+
+    def _deployment_facts(self, target_id: str) -> tuple[int, bool, Any]:
+        """(deployments, any verified deployment, latest verified time) recorded for a target."""
+        from app.modules.kg.models import KgGraphDeployment
+
+        rows = list(
+            self.session.scalars(
+                select(KgGraphDeployment).where(
+                    KgGraphDeployment.target_id == target_id, KgGraphDeployment.origin != "legacy"
+                )
             )
-            for k in KINDS.values()
-        ]
+        )
+        verified = [r for r in rows if r.status in ("completed", "superseded")]
+        latest = max((r.completed_at for r in verified if r.completed_at), default=None)
+        return len(rows), bool(verified), latest
+
+    def _graph_view(
+        self,
+        *,
+        connection_id: str,
+        name: str,
+        builtin: bool,
+        kind_id: str,
+        config: dict[str, Any],
+        secret_env: str | None,
+        description: str,
+        enabled: bool,
+        is_default: bool,
+        last_test: dict[str, Any] | None,
+        updated_by: str = "",
+        updated_at: Any = None,
+    ) -> GraphConnectionRead:
+        kind = KINDS[kind_id]
+        test = _test(last_test)
+        connected = bool(test and test.ok)
+        internal = kind.family in ("local", "oxigraph")
+        writable = is_writable(kind_id, config)
+        count, verified, latest = self._deployment_facts(connection_id)
+        query_url, update_url = sparql_endpoints(kind_id, config) if kind.family == "sparql" else ("", None)
+        return GraphConnectionRead(
+            id=connection_id,
+            name=name,
+            builtin=builtin,
+            kind=kind_id,
+            provider=kind_id,
+            kind_label=kind.label,
+            model=kind.model,
+            protocol=kind.protocol,
+            config=display_config(kind_id, config),
+            effective_endpoints=(
+                {"query": query_url, "update": update_url} if kind.family == "sparql" else {}
+            ),
+            secret_env=secret_env,
+            secret_present=secret_is_set(secret_env) if secret_env else None,
+            description=description,
+            enabled=enabled,
+            is_default=is_default,
+            status="not_tested" if test is None else "connected" if test.ok else "failed",
+            capabilities=GraphCapabilities(
+                connection_supported=kind.available,
+                connected=connected,
+                read_supported=kind.read_supported,
+                deployment_supported=kind.deployment_supported,
+                write_configured=writable,
+                deployment_ready=enabled and kind.deployment_supported and writable and (internal or connected),
+                deployment_verified=verified,
+                live_tested=kind.live_tested,
+                verification_note=kind.verification_note,
+                last_deployment_at=latest,
+            ),
+            deployment_count=count,
+            last_test=test,
+            used_by_projects=self._projects_using("default_graph_connection_id", connection_id),
+            updated_by=updated_by,
+            updated_at=updated_at,
+        )
 
     def _builtin_graph(self, connection_id: str) -> GraphConnectionRead:
         name, kind_id = BUILTIN_TARGETS[connection_id]
         kind = KINDS[kind_id]
         config = {"path": str(self.settings.oxigraph_dir)} if kind_id == "oxigraph" else {}
-        return GraphConnectionRead(
-            id=connection_id,
-            name=name,
-            builtin=True,
-            kind=kind_id,
-            kind_label=kind.label,
-            model=kind.model,
-            config=config,
-            secret_env=None,
-            secret_present=None,
-            description=kind.description,
-            last_test=_test(self._builtin_tests.get(connection_id)),
-            used_by_projects=self._projects_using("default_graph_connection_id", connection_id),
+        default_row = self.session.scalars(select(GraphConnection.id).where(GraphConnection.is_default.is_(True))).first()
+        return self._graph_view(
+            connection_id=connection_id, name=name, builtin=True, kind_id=kind_id, config=config, secret_env=None,
+            description=kind.description, enabled=True,
+            is_default=connection_id == LOCAL_SQL and default_row is None,
+            last_test=self._builtin_tests.get(connection_id),
         )
 
     def _graph_read(self, record: GraphConnection) -> GraphConnectionRead:
-        kind = KINDS[record.kind]
-        return GraphConnectionRead(
-            id=record.id,
-            name=record.name,
-            builtin=False,
-            kind=record.kind,
-            kind_label=kind.label,
-            model=kind.model,
-            config=dict(record.config or {}),
-            secret_env=record.secret_env,
-            secret_present=secret_is_set(record.secret_env) if record.secret_env else None,
-            description=record.description,
-            last_test=_test(record.last_test),
-            used_by_projects=self._projects_using("default_graph_connection_id", record.id),
-            updated_by=record.updated_by,
-            updated_at=record.updated_at,
+        return self._graph_view(
+            connection_id=record.id, name=record.name, builtin=False, kind_id=record.kind,
+            config=dict(record.config or {}), secret_env=record.secret_env, description=record.description,
+            enabled=record.enabled, is_default=record.is_default, last_test=record.last_test,
+            updated_by=record.updated_by, updated_at=record.updated_at,
         )
 
     def _graph_record(self, connection_id: str) -> GraphConnection:
@@ -461,33 +545,24 @@ class SettingsService:
             return self._builtin_graph(connection_id)
         return self._graph_read(self._graph_record(connection_id))
 
-    def _validate_graph_input(self, data: GraphConnectionInput) -> dict[str, str]:
-        kind = KINDS.get(data.kind)
-        if kind is None:
-            raise BusinessRuleError(f"Unknown graph database kind '{data.kind}'.", code="GRAPH_KIND_UNKNOWN")
-        if not kind.registrable:
-            reason = kind.unavailable_reason or "Built-in targets are always available and cannot be registered again."
-            raise BusinessRuleError(f"{kind.label} cannot be registered: {reason}", code="GRAPH_KIND_NOT_AVAILABLE")
-        allowed = {f.key for f in kind.fields if not f.secret}
-        unknown = sorted(set(data.config) - allowed)
-        if unknown:
-            raise BusinessRuleError(f"Unknown configuration fields for {kind.label}: {', '.join(unknown)}.",
-                                    code="GRAPH_CONFIG_INVALID")
-        missing = [f.label for f in kind.fields if f.required and not f.secret and not data.config.get(f.key)]
-        if missing:
-            raise BusinessRuleError(f"Required: {', '.join(missing)}.", code="GRAPH_CONFIG_INVALID")
-        for key in ("query_url", "update_url"):
-            value = data.config.get(key)
-            if value and not value.startswith(("http://", "https://")):
-                raise BusinessRuleError(f"{key} must start with http:// or https://.", code="GRAPH_CONFIG_INVALID")
-        return {k: v for k, v in data.config.items() if v}
+    def workspace_default_graph_id(self) -> str:
+        """The graph database preselected for new projects: the registered default, else the local SQL graph."""
+        record = self.session.scalars(
+            select(GraphConnection).where(GraphConnection.is_default.is_(True), GraphConnection.enabled.is_(True))
+        ).first()
+        return record.id if record is not None else LOCAL_SQL
+
+    def _normalized_graph_values(self, data: GraphConnectionInput) -> tuple[dict[str, str], str | None]:
+        return normalize_config(data.kind, dict(data.config), data.secret_env, allow_private=self._allow_private)
 
     def create_graph(self, data: GraphConnectionInput, actor: str) -> GraphConnectionRead:
-        config = self._validate_graph_input(data)
+        config, secret_env = self._normalized_graph_values(data)
         if self._name_taken(GraphConnection, data.name) or data.name in {n for n, _ in BUILTIN_TARGETS.values()}:
             raise ConflictError(f"A graph connection named '{data.name}' already exists.", code="GRAPH_CONNECTION_NAME_TAKEN")
-        record = GraphConnection(name=data.name, kind=data.kind, config=config, secret_env=data.secret_env,
-                                 description=data.description, updated_by=actor)
+        record = GraphConnection(
+            name=data.name, kind=data.kind, config=config, secret_env=secret_env, description=data.description,
+            data_model=KINDS[data.kind].model, enabled=data.enabled, is_default=False, updated_by=actor,
+        )
         self.session.add(record)
         self.session.flush()
         _audit(event_type="settings.graph_registered",
@@ -503,19 +578,78 @@ class SettingsService:
         if data.kind != record.kind:
             raise BusinessRuleError("The kind of a registered connection cannot change; register a new one.",
                                     code="GRAPH_KIND_IMMUTABLE")
-        config = self._validate_graph_input(data)
+        config, secret_env = self._normalized_graph_values(data)
         if self._name_taken(GraphConnection, data.name, exclude=record.id):
             raise ConflictError(f"A graph connection named '{data.name}' already exists.", code="GRAPH_CONNECTION_NAME_TAKEN")
-        changed = (record.name, record.config, record.secret_env, record.description) != (
-            data.name, config, data.secret_env, data.description)
-        record.name, record.config, record.secret_env, record.description = data.name, config, data.secret_env, data.description
+        if not data.enabled and record.enabled:
+            self._require_disable_allowed(record)
+        connection_changed = (record.config, record.secret_env) != (config, secret_env)
+        changed = connection_changed or (record.name, record.description, record.enabled) != (
+            data.name, data.description, data.enabled)
+        record.name, record.config, record.secret_env, record.description = data.name, config, secret_env, data.description
+        record.enabled = data.enabled
+        if not data.enabled:
+            record.is_default = False
+        if connection_changed:
+            record.last_test = None  # a changed endpoint or credential must be tested again
         if changed:
-            record.last_test = None
             record.updated_by = actor
             _audit(event_type="settings.graph_updated",
                             summary=f"Graph connection '{record.name}' updated", details={"connection_id": record.id, "actor": actor})
         self.session.commit()
         return self._graph_read(record)
+
+    def _require_disable_allowed(self, record: GraphConnection) -> None:
+        users = self._projects_using("default_graph_connection_id", record.id)
+        if users:
+            raise ConflictError(
+                f"'{record.name}' is the default graph target of {', '.join(users)}. Choose another default first.",
+                code="CONFIG_IN_USE",
+                details={"projects": users},
+            )
+
+    def set_graph_enabled(self, connection_id: str, enabled: bool, actor: str) -> GraphConnectionRead:
+        """Disabling stops new deployments and selection; historical deployments stay readable."""
+        if connection_id in BUILTIN_TARGETS:
+            raise BusinessRuleError("Built-in graph targets are always enabled.", code="BUILTIN_READ_ONLY")
+        record = self._graph_record(connection_id)
+        if record.enabled == enabled:
+            return self._graph_read(record)
+        if not enabled:
+            self._require_disable_allowed(record)
+            record.is_default = False
+        record.enabled = enabled
+        record.updated_by = actor
+        _audit(event_type="settings.graph_enabled" if enabled else "settings.graph_disabled",
+               summary=f"Graph connection '{record.name}' {'enabled' if enabled else 'disabled'}",
+               details={"connection_id": record.id, "actor": actor})
+        self.session.commit()
+        return self._graph_read(record)
+
+    def set_default_graph(self, connection_id: str, actor: str) -> GraphConnectionRead:
+        """Choose the graph database preselected for new projects. The local SQL graph is the implicit default."""
+        if connection_id == OXIGRAPH_EMBEDDED:
+            raise BusinessRuleError(
+                "The embedded store cannot be the workspace default; select it for a project instead.",
+                code="GRAPH_DEFAULT_UNSUPPORTED",
+            )
+        for other in self.session.scalars(select(GraphConnection).where(GraphConnection.is_default.is_(True))):
+            other.is_default = False
+        if connection_id != LOCAL_SQL:
+            record = self._graph_record(connection_id)
+            if not record.enabled:
+                raise BusinessRuleError("Enable this graph database before making it the default.", code="GRAPH_CONNECTION_DISABLED")
+            if not is_writable(record.kind, record.config or {}):
+                raise BusinessRuleError(
+                    "A read-only connection cannot be the default: it cannot receive deployments.",
+                    code="GRAPH_DEFAULT_NOT_WRITABLE",
+                )
+            record.is_default = True
+            record.updated_by = actor
+        _audit(event_type="settings.graph_default", summary=f"Default graph database set to {connection_id}",
+               details={"connection_id": connection_id, "actor": actor})
+        self.session.commit()
+        return self.get_graph(connection_id)
 
     def delete_graph(self, connection_id: str, actor: str) -> None:
         if connection_id in BUILTIN_TARGETS:
@@ -533,19 +667,35 @@ class SettingsService:
         self.session.delete(record)
         self.session.commit()
 
+    def probe_graph(self, kind_id: str, config: dict[str, Any], secret_env: str | None) -> ConnectionResult:
+        """Run the provider's read-only connection test. Nothing here creates, changes or deletes graph data."""
+        kind = KINDS[kind_id]
+        try:
+            if kind.family == "local":
+                return check_local_sql(self.session)
+            if kind.family == "oxigraph":
+                return check_oxigraph(self.settings.oxigraph_dir)
+            if kind.family == "sparql":
+                return check_sparql(kind_id, config, secret_env, allow_private=self._allow_private)
+            if kind.family == "neo4j":
+                from app.modules.graph.targets.neo4j_store import check_neo4j
+
+                return check_neo4j(config, secret_env, allow_private=self._allow_private)
+            if kind.family == "gremlin":
+                from app.modules.graph.targets.gremlin_store import check_cosmos
+
+                return check_cosmos(config, secret_env, allow_private=self._allow_private)
+        except ImportError:
+            return ConnectionResult(False, f"The driver for {kind.label} is not installed on the server.")
+        return ConnectionResult(False, f"No connection test exists for {kind.label}.")
+
     def test_graph(self, connection_id: str) -> GraphConnectionRead:
-        if connection_id == LOCAL_SQL:
-            self._builtin_tests[connection_id] = _stamp(check_local_sql(self.session))
-            return self._builtin_graph(connection_id)
-        if connection_id == OXIGRAPH_EMBEDDED:
-            self._builtin_tests[connection_id] = _stamp(check_oxigraph(self.settings.oxigraph_dir))
+        if connection_id in BUILTIN_TARGETS:
+            kind_id = BUILTIN_TARGETS[connection_id][1]
+            self._builtin_tests[connection_id] = _stamp(self.probe_graph(kind_id, {}, None))
             return self._builtin_graph(connection_id)
         record = self._graph_record(connection_id)
-        if record.kind == "sparql-http":
-            result = check_sparql_http(record.config or {}, record.secret_env)
-        else:  # pragma: no cover - only available kinds can be registered
-            result = ConnectionResult(False, f"No adapter for {record.kind}.")
-        record.last_test = _stamp(result)
+        record.last_test = _stamp(self.probe_graph(record.kind, dict(record.config or {}), record.secret_env))
         self.session.commit()
         return self._graph_read(record)
 
@@ -568,8 +718,14 @@ class SettingsService:
                 )
 
     def require_graph_id(self, connection_id: str | None) -> None:
+        """A graph database selectable for a project or build must exist and be enabled."""
         if connection_id and connection_id not in BUILTIN_TARGETS:
-            self._graph_record(connection_id)
+            record = self._graph_record(connection_id)
+            if not record.enabled:
+                raise BusinessRuleError(
+                    f"Graph database '{record.name}' is disabled. Enable it in Settings first.",
+                    code="GRAPH_CONNECTION_DISABLED",
+                )
 
     def effective_llm_id(self, project_id: str, requested: str | None = None) -> str:
         if requested:

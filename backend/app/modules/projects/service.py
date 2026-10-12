@@ -33,10 +33,28 @@ def _require_registered(
                 "before selecting this LLM.",
                 code="LLM_CREDENTIAL_MISSING",
             )
-    if graph_connection_id not in (None, "local-sql", "oxigraph-embedded") and session.get(
-        GraphConnection, graph_connection_id
-    ) is None:
-        raise NotFoundError(f"Graph connection '{graph_connection_id}' was not found.", code="GRAPH_CONNECTION_NOT_FOUND")
+    if graph_connection_id not in (None, "local-sql", "oxigraph-embedded"):
+        graph = session.get(GraphConnection, graph_connection_id)
+        if graph is None:
+            raise NotFoundError(
+                f"Graph connection '{graph_connection_id}' was not found.", code="GRAPH_CONNECTION_NOT_FOUND"
+            )
+        if not graph.enabled:
+            raise ConflictError(
+                f"Graph database '{graph.name}' is disabled. Enable it in Settings first.",
+                code="GRAPH_CONNECTION_DISABLED",
+            )
+
+
+def _workspace_default_graph(session: Session) -> str | None:
+    """The registered graph database preselected for new projects (existing projects are never changed)."""
+    from sqlalchemy import select
+
+    from app.modules.settings.models import GraphConnection
+
+    return session.scalars(
+        select(GraphConnection.id).where(GraphConnection.is_default.is_(True), GraphConnection.enabled.is_(True))
+    ).first()
 
 
 class ProjectService:
@@ -87,10 +105,11 @@ class ProjectService:
             )
         discovery_llm = data.default_discovery_llm_config_id or data.default_llm_config_id
         kg_llm = data.default_kg_llm_config_id or data.default_llm_config_id
+        graph_id = data.default_graph_connection_id or _workspace_default_graph(self.session)
         _require_registered(
             self.session,
             [data.default_llm_config_id, discovery_llm, kg_llm],
-            data.default_graph_connection_id,
+            graph_id,
         )
         project = self.projects.add(
             Project(
@@ -103,8 +122,8 @@ class ProjectService:
                 ),
                 default_kg_llm_config_id=None if kg_llm in (None, "env-default") else kg_llm,
                 default_graph_connection_id=None
-                if data.default_graph_connection_id in (None, "local-sql")
-                else data.default_graph_connection_id,
+                if graph_id in (None, "local-sql")
+                else graph_id,
             )
         )
         record_activity(

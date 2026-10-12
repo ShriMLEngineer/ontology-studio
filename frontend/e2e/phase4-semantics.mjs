@@ -348,14 +348,38 @@ d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
     expect((await result.getAttribute('data-ok')) === 'true', `real connection test: ${await result.textContent()}`)
   })
 
-  await step('Graph databases: built-in Oxigraph tested, unavailable kinds explained, failures reported honestly', async () => {
+  await step('Graph databases: provider dropdown shows each provider\'s own fields; failures reported honestly', async () => {
     const oxigraph = page.getByTestId('graph-row').filter({ hasText: 'Embedded Oxigraph' })
     await oxigraph.getByRole('button', { name: 'Test' }).click()
     await oxigraph.locator('[data-testid="connection-test"][data-ok="true"]').waitFor()
-    expect((await page.getByTestId('unavailable-kinds').textContent()).includes('Neo4j'), 'Neo4j listed as not available')
     await page.getByRole('button', { name: 'Register database' }).click()
     const dialog = page.getByTestId('graph-dialog')
-    await dialog.getByLabel('Name', { exact: true }).fill('Unreachable SPARQL endpoint')
+    const provider = dialog.getByLabel('Graph database provider')
+    const offered = await provider.locator('option').allTextContents()
+    for (const label of [
+      'Azure Cosmos DB for Apache Gremlin',
+      'Neo4j / Neo4j AuraDB',
+      'Ontotext GraphDB',
+      'Apache Jena Fuseki',
+      'Generic SPARQL 1.1 endpoint',
+      'Local SQL Graph Store',
+    ]) {
+      expect(offered.includes(label), `provider offered: ${label}`)
+    }
+    await provider.selectOption('neo4j')
+    await dialog.getByLabel('Bolt URI').waitFor()
+    await dialog.getByLabel('Password (environment variable name)').waitFor()
+    expect((await dialog.getByTestId('provider-summary').textContent()).includes('Property graph'), 'model derived from the provider')
+    await provider.selectOption('cosmos-gremlin')
+    await dialog.getByLabel('Graph partition-key path').waitFor()
+    expect((await dialog.getByLabel('Bolt URI').count()) === 0, 'Neo4j fields disappear when another provider is chosen')
+    await provider.selectOption('graphdb')
+    await dialog.getByLabel('Repository ID').waitFor()
+    expect((await dialog.getByLabel('User name').count()) === 0, 'credential fields stay hidden until an auth type needs them')
+    await dialog.getByLabel('Authentication').selectOption('basic')
+    await dialog.getByLabel('User name').waitFor()
+    await provider.selectOption('sparql-http')
+    await dialog.getByLabel('Configuration name').fill('Unreachable SPARQL endpoint')
     await dialog.getByLabel('Query endpoint URL').fill('http://127.0.0.1:9/sparql')
     await dialog.getByRole('button', { name: 'Save' }).click()
     const row = page.getByTestId('graph-row').filter({ hasText: 'Unreachable SPARQL endpoint' })
@@ -363,6 +387,8 @@ d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
     const result = row.locator('[data-testid="connection-test"][data-ok="false"]')
     await result.waitFor({ timeout: 30_000 })
     expect((await result.textContent()).includes('unreachable'), 'connection failure is reported, not simulated')
+    expect((await row.getByTestId('graph-status').textContent()) === 'Connection failed', 'status is Connection failed')
+    expect((await row.getByTestId('graph-capabilities').textContent()).includes('Read-only registration'), 'a query-only registration is not deployment-ready')
     await shot('07-settings')
   })
 

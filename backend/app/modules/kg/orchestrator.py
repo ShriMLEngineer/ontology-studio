@@ -908,7 +908,7 @@ class _Run:
             outcome = self._deploy_to_target(key, target, snapshot, projection, data_namespace)
             deployments.append(outcome)
             note = (
-                f" Deployed to {outcome['target']}: {outcome.get('triples', 0)} triple(s), verified."
+                f" Deployed to {outcome['target']}: {outcome['summary']}, verified."
                 if outcome["status"] == "completed"
                 else f" Deployment to {outcome['target']} {outcome['status']}: {outcome.get('error') or outcome.get('reason')}"
             )
@@ -945,7 +945,7 @@ class _Run:
                 row = deploy(
                     session,
                     build=build,
-                    spec=spec_from_snapshot(target),
+                    spec=spec_from_snapshot(target, self.settings.graph_allow_private_networks),
                     snapshot=snapshot,
                     projection=projection,
                     data_namespace=data_namespace,
@@ -959,19 +959,26 @@ class _Run:
                 self.tracker.log(key, f"Not deployed to {name}: {error.message}", level="warning")
                 return {"target": name, "kind": target.get("kind"), "status": "skipped", "reason": error.message}
             session.commit()
+            stats = row.stats or {}
+            summary = (
+                f"{stats.get('triples', 0)} triple(s)"
+                if row.data_model == "rdf"
+                else f"{stats.get('vertices', 0)} vertices and {stats.get('edges', 0)} edges"
+            )
+            detail = f" in {len(row.graphs or {})} named graph(s)" if row.data_model == "rdf" else ""
             outcome = {
                 "id": row.id,
                 "target": row.target_name,
                 "kind": row.target_kind,
                 "status": row.status,
-                "triples": (row.stats or {}).get("triples"),
+                "triples": stats.get("triples"),
+                "summary": summary,
                 "error": row.error,
             }
         if outcome["status"] == "completed":
             self.tracker.log(
                 key,
-                f"Deployed to {name} ({target.get('kind')}): {outcome['triples']} triple(s) in "
-                f"{len(row.graphs or {})} named graph(s), verified by reading the counts back.",
+                f"Deployed to {name} ({target.get('kind')}): {summary}{detail}, verified by reading the counts back.",
             )
         else:
             self.tracker.log(key, f"Deployment to {name} failed: {outcome['error']}", level="warning")

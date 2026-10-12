@@ -27,6 +27,7 @@ import { relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 import { useReviewerName } from '@/features/ontology/governance/reviewer'
 import { useGraphConnections } from '@/features/settings/hooks'
+import { GraphCapabilityChips, GraphStatusBadge } from '@/features/settings/GraphCapabilities'
 import { GraphTargetSelect } from '@/features/settings/selectors'
 import { FormField, NativeSelect } from '../fields'
 import { useDeployments, useGraphCapabilities } from '../hooks'
@@ -129,6 +130,17 @@ function DeployPanel({ build, deployments }: { build: BuildDetail; deployments: 
   const unavailable = (capabilities.data?.profiles ?? []).filter((p) => !p.adapter_available)
   const loss = report.data?.report.has_semantic_loss ?? false
   const current = deployments.find((d) => d.target_id === targetId && d.status === 'completed')
+  const internal = Boolean(target && (target.builtin || target.provider === 'local-sql'))
+  // Connection support is not deployment readiness: say precisely what blocks or qualifies a deployment.
+  const blockedReason = !target
+    ? ''
+    : !target.enabled
+      ? 'This graph database is disabled in Settings.'
+      : !target.capabilities.deployment_supported
+        ? 'No deployment adapter exists for this provider.'
+        : !target.capabilities.write_configured
+          ? 'This registration has no update endpoint, so it is read-only and cannot receive a deployment.'
+          : ''
 
   const deploy = useMutation({
     mutationFn: () =>
@@ -140,6 +152,8 @@ function DeployPanel({ build, deployments }: { build: BuildDetail; deployments: 
       }),
     onSuccess: (row) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.kgDeployments(build.id) })
+      // "Deployment verified" is derived from recorded deployments, so the registry view must refresh too.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.graphConnections })
       if (row.status === 'completed') toast.success(`Deployed to ${row.target_name}`, { description: 'Counts verified in the target.' })
       else toast.error(`Deployment to ${row.target_name} failed`, { description: row.error ?? undefined })
     },
@@ -159,7 +173,7 @@ function DeployPanel({ build, deployments }: { build: BuildDetail; deployments: 
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3 md:grid-cols-2">
-          <FormField label="Graph target" hint="Register SPARQL endpoints in Settings → Graph databases.">
+          <FormField label="Graph target" hint="Register Neo4j, Cosmos DB, GraphDB, Fuseki or SPARQL databases in Settings → Graph databases.">
             <GraphTargetSelect
               aria-label="Deployment target"
               value={targetId}
@@ -182,6 +196,35 @@ function DeployPanel({ build, deployments }: { build: BuildDetail; deployments: 
             </NativeSelect>
           </FormField>
         </div>
+
+        {target && (
+          <div className="space-y-1.5 rounded-lg border bg-muted/30 p-3 text-xs" data-testid="deploy-target-status">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{target.kind_label}</span>
+              <GraphStatusBadge status={target.status} />
+              {target.last_test && (
+                <span className="text-muted-foreground">
+                  {target.last_test.message} ({relativeTime(target.last_test.tested_at ?? '')})
+                </span>
+              )}
+            </div>
+            <GraphCapabilityChips connection={target} />
+            {blockedReason && (
+              <p className="text-red-700" data-testid="deploy-blocked">
+                {blockedReason}
+              </p>
+            )}
+            {!blockedReason && !internal && target.status !== 'connected' && (
+              <p className="text-amber-700">
+                The connection has not been verified (Settings → Test). Deploying still attempts the write; if the database is
+                unreachable the failure is recorded on the deployment and nothing falls back to another store.
+              </p>
+            )}
+            {!target.capabilities.live_tested && (
+              <p className="text-amber-700">Unverified adapter: {target.capabilities.verification_note}</p>
+            )}
+          </div>
+        )}
 
         {report.isPending && target && <LoadingState label="Analysing compatibility…" />}
         {report.isError && <ErrorState error={report.error} onRetry={() => report.refetch()} />}
@@ -207,7 +250,7 @@ function DeployPanel({ build, deployments }: { build: BuildDetail; deployments: 
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={() => deploy.mutate()}
-            disabled={!reviewer || !target || deploy.isPending || !report.data || (loss && !acknowledged)}
+            disabled={!reviewer || !target || deploy.isPending || !report.data || (loss && !acknowledged) || Boolean(blockedReason)}
             data-testid="deploy-button"
           >
             {deploy.isPending ? <Loader2 className="animate-spin" /> : <Rocket />}

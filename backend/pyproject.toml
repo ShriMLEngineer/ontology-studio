@@ -21,6 +21,8 @@ dependencies = [
     "openai>=1.75,<3",
     "anthropic>=0.75,<1",
     "azure-identity>=1.19,<2",
+    "neo4j>=5.26,<7",
+    "gremlinpython>=3.7,<4",
 ]
 
 [project.optional-dependencies]

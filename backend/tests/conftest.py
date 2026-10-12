@@ -1,3 +1,4 @@
+import socket
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -5,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core import secrets
+from app.core import net_safety, secrets
 from app.core.config import Settings
 from app.main import create_app
 
@@ -14,6 +15,18 @@ from app.main import create_app
 def _isolate_dotenv_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     """A developer's real .env must never satisfy a credential reference in tests."""
     monkeypatch.setattr(secrets, "ENV_FILES", ())
+
+
+@pytest.fixture(autouse=True)
+def _offline_dns(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Names used by tests resolve to a public address; the endpoint-safety tests exercise real resolution."""
+    if request.module.__name__.endswith("test_net_safety"):
+        return
+
+    def public(host: str, port: int) -> list[Any]:
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(net_safety, "resolve_host", public)
 
 
 def make_settings(db_path: Path, *, seed: bool = False, **overrides: Any) -> Settings:

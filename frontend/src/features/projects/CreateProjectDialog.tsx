@@ -21,6 +21,7 @@ import { errorMessage } from '@/lib/api/client'
 import { projectsApi } from '@/lib/api/endpoints'
 import { slugify } from '@/lib/naming'
 import { queryKeys } from '@/lib/query'
+import { useGraphConnections } from '@/features/settings/hooks'
 import { GraphTargetSelect, LlmConfigSelect } from '@/features/settings/selectors'
 
 interface FormState {
@@ -60,8 +61,13 @@ function derivePrefix(name: string): string {
 export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const [form, setForm] = useState<FormState>(EMPTY)
   const [ontologyTouched, setOntologyTouched] = useState(false)
+  const [graphTouched, setGraphTouched] = useState(false)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const connections = useGraphConnections()
+  // The registered default is preselected until the user chooses; the built-in local graph is the implicit default.
+  const workspaceDefault = connections.data?.find((c) => c.is_default && !c.builtin && c.enabled)?.id
+  const graphConnectionId = graphTouched ? form.graphConnectionId : (workspaceDefault ?? form.graphConnectionId)
 
   const derived = (name: string) => ({
     ontologyName: name.trim() ? `${name.trim()} Core` : '',
@@ -83,7 +89,7 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
         },
         default_discovery_llm_config_id: form.discoveryLlmConfigId,
         default_kg_llm_config_id: form.kgLlmConfigId,
-        default_graph_connection_id: form.graphConnectionId,
+        default_graph_connection_id: graphConnectionId,
       }),
     onSuccess: async (project) => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projects })
@@ -91,6 +97,7 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
       onOpenChange(false)
       setForm(EMPTY)
       setOntologyTouched(false)
+      setGraphTouched(false)
       navigate(`/projects/${project.id}/workspace`)
     },
   })
@@ -224,8 +231,11 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
               <GraphTargetSelect
                 id="project-graph"
                 allowProjectDefault={false}
-                value={form.graphConnectionId}
-                onChange={(v) => update({ graphConnectionId: v ?? 'local-sql' })}
+                value={graphConnectionId}
+                onChange={(v) => {
+                  setGraphTouched(true)
+                  update({ graphConnectionId: v ?? 'local-sql' })
+                }}
               />
             </div>
           </div>

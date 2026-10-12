@@ -13,6 +13,7 @@
     "e2e:kg": "node e2e/phase3-knowledge-graph.mjs",
     "e2e:semantic": "node e2e/phase4-semantics.mjs",
     "e2e:graphs": "node e2e/phase4-graphs.mjs",
+    "e2e:neo4j": "node e2e/phase4-neo4j-live.mjs",
     "e2e:lifecycle": "node e2e/phase4-lifecycle.mjs"
   },
   "dependencies": {

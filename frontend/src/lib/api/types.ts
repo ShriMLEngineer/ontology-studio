@@ -1407,6 +1407,13 @@ export interface GraphKindField {
   required: boolean
   secret: boolean
   placeholder: string
+  type: 'text' | 'url' | 'number' | 'integer' | 'select' | 'secret_ref'
+  default: string
+  options: { value: string; label: string }[]
+  help: string
+  visible_when: { field: string; values: string[] } | null
+  minimum: number | null
+  maximum: number | null
 }
 
 export interface GraphKind {
@@ -1418,20 +1425,51 @@ export interface GraphKind {
   available: boolean
   description: string
   unavailable_reason: string
+  protocol: string
+  connection_supported: boolean
+  read_supported: boolean
+  deployment_supported: boolean
+  live_tested: boolean
+  verification_note: string
   fields: GraphKindField[]
 }
+
+/** What a registration can do. A connection is never presented as deployment readiness. */
+export interface GraphCapabilities {
+  registered: boolean
+  connection_supported: boolean
+  connected: boolean
+  read_supported: boolean
+  deployment_supported: boolean
+  write_configured: boolean
+  deployment_ready: boolean
+  deployment_verified: boolean
+  live_tested: boolean
+  verification_note: string
+  last_deployment_at: string | null
+}
+
+export type GraphConnectionStatus = 'not_tested' | 'connected' | 'failed'
 
 export interface GraphConnection {
   id: string
   name: string
   builtin: boolean
   kind: string
+  provider: string
   kind_label: string
   model: 'rdf' | 'property-graph'
+  protocol: string
   config: Record<string, string>
+  effective_endpoints: Record<string, string | null>
   secret_env: string | null
   secret_present: boolean | null
   description: string
+  enabled: boolean
+  is_default: boolean
+  status: GraphConnectionStatus
+  capabilities: GraphCapabilities
+  deployment_count: number
   last_test: ConnectionTest | null
   used_by_projects: string[]
   updated_by: string
@@ -1443,6 +1481,7 @@ export interface GraphConnectionInput {
   kind: string
   config: Record<string, string>
   secret_env?: string | null
+  enabled: boolean
   description: string
 }
 

@@ -92,6 +92,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with session_factory() as session:
                 seed_demo_data(session)
         yield
+        from app.modules.graph.targets.property_graph import close_all_connections
+
+        close_all_connections()
         engine.dispose()
 
     app = FastAPI(

@@ -11,7 +11,7 @@ import logging
 import time
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.core.ids import utcnow
+from app.core.secrets import get_secret
 from app.modules.graph.capabilities import (
     MAPPING_PROFILES,
     PROFILES,
@@ -39,10 +40,11 @@ from app.modules.graph.store import GraphStore
 from app.modules.graph.targets import KINDS
 from app.modules.graph.targets.adapters import (
     DeploymentError,
-    LocalSqlAdapter,
     TargetSpec,
+    property_graph_adapter,
     rdf_adapter,
 )
+from app.modules.graph.targets.property_graph import PropertyTarget, property_graph_store
 from app.modules.kg.models import KgBuild, KgCandidateFact, KgEntity, KgGraphDeployment
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.schemas import (
@@ -138,8 +140,8 @@ def deploy(
     configuration errors (unknown kind, incompatible profile, unacknowledged semantic loss) raise."""
     kind = KINDS.get(spec.kind)
     profile = require_profile(spec.kind)
-    if kind is None or not kind.available:
-        reason = kind.unavailable_reason if kind else "unknown kind"
+    if kind is None or not kind.available or not kind.deployment_supported:
+        reason = kind.unavailable_reason if kind and kind.unavailable_reason else "the provider adapter cannot write graphs"
         raise BusinessRuleError(f"{profile.label} has no deployment adapter: {reason}", code="GRAPH_KIND_NOT_AVAILABLE")
     mapping = resolve_mapping(profile, mapping_id)
     report = analyze(snapshot, projection, profile, mapping)
@@ -166,6 +168,7 @@ def deploy(
         stats={},
         origin=origin,
         requested_by=requested_by,
+        target_snapshot=snapshot_of(spec),
     )
     session.add(row)
     session.flush()
@@ -177,12 +180,13 @@ def deploy(
             result = rdf_adapter(spec, oxigraph_dir).deploy_rdf(rdf, include_ontology=mapping.include_ontology)
             stats["triples"] = sum(result.expected.values())
         else:
-            result = LocalSqlAdapter(sql_store).deploy_property_graph(build.id, projection)
+            result = property_graph_adapter(spec, sql_store).deploy_property_graph(build.id, projection)
     except DeploymentError as error:
-        row.status, row.error = "failed", str(error)
+        row.status, row.error = "failed", redact(str(error), spec)
     except Exception as error:  # noqa: BLE001 - recorded on the deployment; the canonical graph is unaffected
         logger.exception("Deployment %s to %s failed", row.id, spec.name)
-        row.status, row.error = "failed", f"Unexpected error: {error.__class__.__name__}: {error}"[:2000]
+        row.status = "failed"
+        row.error = redact(f"Unexpected error: {error.__class__.__name__}: {error}", spec)[:2000]
     else:
         row.graphs = result.graphs
         stats.update(expected=result.expected, verified=result.verified)
@@ -208,11 +212,48 @@ def deploy(
     return row
 
 
-def spec_from_snapshot(target: dict[str, Any]) -> TargetSpec:
+def spec_from_snapshot(target: dict[str, Any], allow_private: bool = True) -> TargetSpec:
     return TargetSpec(
         id=target["id"], name=target.get("name", target["id"]), kind=target["kind"],
         config=dict(target.get("config") or {}), secret_env=target.get("secret_env"),
+        allow_private=allow_private,
     )
+
+
+def snapshot_of(spec: TargetSpec) -> dict[str, Any] | None:
+    """Non-secret connection settings recorded with a deployment (the credential is referenced by name only)."""
+    if spec.kind in ("local-sql", "oxigraph") and not spec.config:
+        return None
+    return {"provider": spec.kind, "config": dict(spec.config), "secret_env": spec.secret_env}
+
+
+def redact(message: str, spec: TargetSpec) -> str:
+    """Remove the credential value, should a driver or server echo it, from a message that is persisted."""
+    secret = get_secret(spec.secret_env)
+    return message.replace(secret, "***") if secret and len(secret) >= 4 else message
+
+
+class _GuardedStore:
+    """Wraps an external graph store so read failures surface as API errors, not server errors."""
+
+    def __init__(self, store: Any, target_name: str) -> None:
+        self._store = store
+        self._target = target_name
+
+    def __getattr__(self, attribute: str) -> Any:
+        value = getattr(self._store, attribute)
+        if not callable(value):
+            return value
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return value(*args, **kwargs)
+            except DeploymentError as error:
+                raise ConflictError(
+                    f"Could not read the deployment from {self._target}: {error}", code="GRAPH_TARGET_UNREACHABLE"
+                ) from error
+
+        return call
 
 
 class KgDeploymentService:
@@ -249,13 +290,19 @@ class KgDeploymentService:
     def _spec(self, target_id: str) -> TargetSpec:
         target = self.settings_service.get_graph(target_id)
         return TargetSpec(id=target.id, name=target.name, kind=target.kind, config=dict(target.config),
-                          secret_env=target.secret_env)
+                          secret_env=target.secret_env, allow_private=self.settings.graph_allow_private_networks)
+
+    def _write_spec(self, target_id: str) -> TargetSpec:
+        """A target that can receive a new deployment: it must exist and be enabled."""
+        self.settings_service.require_graph_id(target_id)
+        return self._spec(target_id)
 
     def read(self, row: KgGraphDeployment, build_number: int | None = None) -> DeploymentRead:
         if build_number is None:
             build = self.session.get(KgBuild, row.build_id)
             build_number = build.number if build else 0
-        available = bool(KINDS.get(row.target_kind) and KINDS[row.target_kind].available)
+        kind = KINDS.get(row.target_kind)
+        available = bool(kind and kind.available and kind.read_supported)
         return DeploymentRead(
             id=row.id,
             build_id=row.build_id,
@@ -335,7 +382,7 @@ class KgDeploymentService:
 
     def create(self, build_id: str, data: DeploymentCreate) -> DeploymentRead:
         build = self._completed(build_id)
-        spec = self._spec(data.target_id)
+        spec = self._write_spec(data.target_id)
         snapshot, projection = load_projection(self.session, build)
         row = deploy(
             self.session,
@@ -362,12 +409,26 @@ class KgDeploymentService:
         if row.status != "completed":
             raise ConflictError(f"The deployment is {row.status}; only completed deployments can be read.",
                                 code="DEPLOYMENT_NOT_READABLE")
-        if not (KINDS.get(row.target_kind) and KINDS[row.target_kind].available):
+        kind = KINDS.get(row.target_kind)
+        if not (kind and kind.available and kind.read_supported):
             raise ConflictError(f"No adapter for {row.target_kind}.", code="GRAPH_KIND_NOT_AVAILABLE")
 
-    def _rdf_spec(self, row: KgGraphDeployment) -> TargetSpec:
+    def _read_spec(self, row: KgGraphDeployment) -> TargetSpec:
+        """The connection a deployment was written with. Reads use the recorded settings, so editing or
+        re-pointing a registration never redirects reads of a historical deployment; deployments recorded
+        before snapshots existed fall back to the current registration."""
+        allow_private = self.settings.graph_allow_private_networks
         if row.target_kind == "oxigraph":
             return TargetSpec(id=row.target_id, name=row.target_name, kind="oxigraph")
+        if row.target_kind == "local-sql":
+            return TargetSpec(id=row.target_id, name=row.target_name, kind="local-sql")
+        snapshot = row.target_snapshot
+        if snapshot:
+            return TargetSpec(
+                id=row.target_id, name=row.target_name, kind=snapshot.get("provider") or row.target_kind,
+                config=dict(snapshot.get("config") or {}), secret_env=snapshot.get("secret_env"),
+                allow_private=allow_private,
+            )
         try:
             return self._spec(row.target_id)
         except NotFoundError as error:
@@ -380,7 +441,15 @@ class KgDeploymentService:
         row = self._deployment(deployment_id)
         self._usable(row, build_id)
         if row.data_model != "rdf":
-            return self.sql_store, []
+            if row.target_kind == "local-sql":
+                return self.sql_store, []
+            spec = self._read_spec(row)
+            try:
+                store = property_graph_store(PropertyTarget(spec.kind, spec.config, spec.secret_env, spec.allow_private))
+            except DeploymentError as error:
+                raise ConflictError(f"Could not read the deployment from {row.target_name}: {error}",
+                                    code="GRAPH_TARGET_UNREACHABLE") from error
+            return cast(GraphStore, _GuardedStore(store, row.target_name)), []
         key = f"{row.build_id}|{row.id}"
         with _read_cache_lock:
             cached = _read_cache.get(key)
@@ -389,7 +458,7 @@ class KgDeploymentService:
         build = self._build(row.build_id)
         version = self.session.get(OntologyVersion, build.ontology_version_id)
         assert version is not None
-        adapter = rdf_adapter(self._rdf_spec(row), self.settings.oxigraph_dir)
+        adapter = rdf_adapter(self._read_spec(row), self.settings.oxigraph_dir)
         graphs = row.graphs or {}
         try:
             data, provenance = adapter.fetch(graphs["data"]), adapter.fetch(graphs["provenance"])
@@ -413,7 +482,7 @@ class KgDeploymentService:
             )
         form = check_read_only(data.query)
         graphs = row.graphs or {}
-        adapter = rdf_adapter(self._rdf_spec(row), self.settings.oxigraph_dir)
+        adapter = rdf_adapter(self._read_spec(row), self.settings.oxigraph_dir)
         started = time.perf_counter()
         result = adapter.run_query(data.query, form, graphs["data"], [g for g in graphs.values() if g])
         result.elapsed_ms = int((time.perf_counter() - started) * 1000)
