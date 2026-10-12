@@ -1450,3 +1450,82 @@ export interface ProjectDefaultsUpdate {
   default_graph_connection_id?: string | null
   data_namespace?: string | null
 }
+
+// ---------------------------------------------------------------------------------- project lifecycle (Phase 4)
+
+export type LifecycleStageKey =
+  | 'sources'
+  | 'discovery'
+  | 'review'
+  | 'validation'
+  | 'publication'
+  | 'mapping'
+  | 'kg_build'
+  | 'deployment'
+  | 'evaluation'
+
+export type LifecycleStatus = 'completed' | 'reused' | 'in_progress' | 'pending' | 'blocked' | 'outdated'
+
+export interface LifecycleStageDefinition {
+  key: LifecycleStageKey
+  label: string
+  group: 'governance' | 'knowledge-graph'
+  description: string
+  optional: boolean
+}
+
+export interface LifecycleStage {
+  key: LifecycleStageKey
+  label: string
+  status: LifecycleStatus
+  summary: string
+  details: string[]
+  updated_at: string | null
+  reused: { from_iteration: number; summary: string; refs: Record<string, unknown> } | null
+  link: { area: 'ontology' | 'knowledge-graph'; tab: string; build_id: string | null }
+}
+
+export interface IterationSummary {
+  id: string
+  number: number
+  name: string
+  goal: string
+  start_stage: LifecycleStageKey
+  status: 'active' | 'closed'
+  ontology_id: string | null
+  base_iteration_number: number | null
+  created_by: string
+  started_at: string
+  closed_at: string | null
+  counts: Partial<Record<LifecycleStatus, number>>
+}
+
+export interface IterationDetail extends IterationSummary {
+  frozen: boolean
+  stages: LifecycleStage[]
+}
+
+export interface IterationStartOption {
+  stage: LifecycleStageKey
+  allowed: boolean
+  reason: string
+  reuses: string[]
+}
+
+export interface Lifecycle {
+  project_id: string
+  ontology_id: string | null
+  ontology_name: string | null
+  stages: LifecycleStageDefinition[]
+  iterations: IterationSummary[]
+  iteration: IterationDetail
+  start_options: IterationStartOption[]
+}
+
+export interface IterationCreate {
+  start_stage: LifecycleStageKey
+  name?: string
+  goal?: string
+  ontology_id?: string | null
+  created_by: string
+}

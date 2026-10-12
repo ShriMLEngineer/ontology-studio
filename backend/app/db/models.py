@@ -11,9 +11,11 @@ from app.modules.kg.models import (
     KgCandidateFact,
     KgEntity,
     KgEntityMention,
+    KgGraphDeployment,
     KgOntologyGap,
     KgSourceMapping,
 )
+from app.modules.lifecycle.models import ProjectIteration
 from app.modules.ontology.models import (
     DatatypePropertyRecord,
     ObjectPropertyRecord,
@@ -44,6 +46,7 @@ __all__ = [
     "KgCandidateFact",
     "KgEntity",
     "KgEntityMention",
+    "KgGraphDeployment",
     "KgOntologyGap",
     "KgSourceMapping",
     "LlmConfiguration",
@@ -56,6 +59,7 @@ __all__ = [
     "OntologyShapeRecord",
     "OntologyVersion",
     "Project",
+    "ProjectIteration",
     "ProposalEvent",
     "ProposalEvidence",
     "SourceChunk",

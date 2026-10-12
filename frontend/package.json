@@ -12,7 +12,8 @@
     "e2e:governance": "node e2e/phase2-governance.mjs",
     "e2e:kg": "node e2e/phase3-knowledge-graph.mjs",
     "e2e:semantic": "node e2e/phase4-semantics.mjs",
-    "e2e:graphs": "node e2e/phase4-graphs.mjs"
+    "e2e:graphs": "node e2e/phase4-graphs.mjs",
+    "e2e:lifecycle": "node e2e/phase4-lifecycle.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

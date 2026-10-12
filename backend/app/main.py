@@ -22,6 +22,7 @@ from app.modules.governance.router import router as governance_router
 from app.modules.graph.sql_store import SqlGraphStore
 from app.modules.kg.orchestrator import mark_interrupted_builds
 from app.modules.kg.router import router as kg_router
+from app.modules.lifecycle.router import router as lifecycle_router
 from app.modules.llm.service import build_llm_provider
 from app.modules.llm.service import router as llm_router
 from app.modules.ontology.router import router as ontology_router
@@ -131,5 +132,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api.include_router(semantics_router)
     api.include_router(shacl_router)
     api.include_router(settings_router)
+    api.include_router(lifecycle_router)
     app.include_router(api)
     return app

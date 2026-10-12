@@ -32,7 +32,9 @@ import type {
   GraphNode,
   Health,
   ImportResponse,
+  IterationCreate,
   LLMStatus,
+  Lifecycle,
   LlmConfig,
   LlmConfigInput,
   MappingIssue,
@@ -305,4 +307,10 @@ export const settingsApi = {
     http.put<GraphConnection>(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`, body),
   deleteGraph: (id: string, actor: string) => http.delete(`/settings/graph-connections/${enc(id)}?actor=${enc(actor)}`),
   testGraph: (id: string) => http.post<GraphConnection>(`/settings/graph-connections/${enc(id)}/test`),
+}
+
+export const lifecycleApi = {
+  get: (projectId: string, iterationId?: string) =>
+    http.get<Lifecycle>(`/projects/${enc(projectId)}/lifecycle${query({ iteration_id: iterationId })}`),
+  start: (projectId: string, body: IterationCreate) => http.post<Lifecycle>(`/projects/${enc(projectId)}/iterations`, body),
 }

@@ -376,6 +376,33 @@ flowchart LR
 * **Migration 0007** adds `kg_graph_deployments` and records, for every build completed before the
   upgrade, a factual `legacy` deployment of its local SQL graph (counts read from the graph tables).
 
+### 4.6f Project lifecycle navigator (Phase 4)
+
+`lifecycle/` tracks **iterations** (`project_iterations`): numbered passes through nine stages -
+*Sources → AI discovery → SME review → Validation → Publication* (ontology governance) and
+*Source mapping → KG build → Graph deployment → Evaluation & feedback* (knowledge graph), with
+evaluation feeding gaps back into SME review. Exactly one iteration per project is active; it covers
+the time window from its start to now.
+
+* **Statuses are derived, never self-reported**, from the records created in the iteration's
+  window: source documents, discovery runs, proposals and decision events, validation runs (by
+  draft revision), published versions, source mappings, KG builds, verified deployments, gaps.
+  *completed* (output produced in this iteration and current), *reused* (stage before the start
+  stage; output taken over from an earlier iteration), *in progress* (running run/build, proposals
+  partly decided, mappings incomplete, gaps partly proposed), *pending* (not done yet or waiting for
+  an upstream stage), *blocked* (validation errors, a failed run/build/deployment, no LLM
+  configured), *outdated* (output older than its inputs: a validated or published revision behind
+  the draft, a build with an older version or newer sources/mappings, deployments and evaluations
+  of an outdated build, mappings never checked against the latest version).
+* **Starting a new iteration** at any stage closes the active iteration, stores its stage statuses
+  as a frozen `closing_snapshot`, and records in `reused` the latest outputs of every stage before
+  the start stage (sources, discovery run, decided proposals, validation, published version,
+  mappings, completed build, verified deployments, evaluation). A start stage whose prerequisite
+  output does not exist is refused (`ITERATION_START_UNAVAILABLE`). Reused outputs are checked
+  against later changes (e.g. a reused publication becomes *outdated* when the draft changes).
+* Iteration #1 is created with the project; **migration 0008** creates it for existing projects,
+  starting at the project's creation so all earlier work belongs to it and nothing is marked reused.
+
 ### 4.7 Knowledge-graph engineering (Phase 3)
 
 ```mermaid
@@ -495,6 +522,7 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 |---|---|
 | System | `GET /health`, `GET /llm/status?check=` |
 | Projects | `GET/POST /projects`, `GET/PATCH /projects/{id}`, `GET /projects/{id}/activity` |
+| Lifecycle (Phase 4) | `GET /projects/{id}/lifecycle?iteration_id=`, `POST /projects/{id}/iterations` (start a new iteration at a stage) |
 | Ontologies & draft | `GET/POST /projects/{id}/ontologies`, `GET/PATCH/DELETE /ontologies/{id}`, `GET/PUT /ontologies/{id}/draft` |
 | Elements | CRUD under `/ontologies/{id}/classes`, `/object-properties`, `/datatype-properties` |
 | Validation | `POST/GET /ontologies/{id}/validations`, `GET /ontologies/{id}/validations/latest` |
@@ -528,6 +556,16 @@ Navigation has four sections: Project Workspace, Ontology Studio, Knowledge Grap
 Phase 4 - **Settings** (project defaults, LLM models and graph databases: register, edit, test and
 delete; kinds without an adapter are explained). Registered configurations are selectable when a
 project is created, when a discovery run is started and when a KG build is configured.
+
+**Project Workspace** (Phase 4) shows the **Project lifecycle navigator**: iteration tabs (active and
+closed), the iteration's start stage, goal and the iteration it continues, a status legend with
+counts, and a read-only React Flow workflow of the nine stages in two swimlanes (ontology governance,
+knowledge graph) with the feedback loop from evaluation to SME review. Stage nodes are coloured by
+status and flag the start stage; selecting one shows its evidence, reused outputs and an *Open* link
+to the tab where the work happens (not offered for closed, frozen iterations). *New iteration* opens
+a dialog to choose the start stage (unavailable stages show why), name and goal, listing the outputs
+that will be reused.
+
 Phase 2 functionality lives in **Ontology Studio** tabs:
 
 | Tab | Capabilities |

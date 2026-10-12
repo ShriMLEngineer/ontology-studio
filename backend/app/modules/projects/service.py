@@ -78,6 +78,9 @@ class ProjectService:
             event_type="project.created",
             summary=f"Project '{project.name}' created",
         )
+        from app.modules.lifecycle.service import LifecycleService
+
+        LifecycleService(self.session).ensure_first_iteration(project)
         if data.initial_ontology is not None:
             OntologyService(self.session).create_ontology(
                 project.id, data.initial_ontology, commit=False

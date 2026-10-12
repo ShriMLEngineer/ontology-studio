@@ -36,6 +36,7 @@ import { governanceApi, kgApi, projectsApi, registryApi, sourcesApi, validationA
 import type { ActivityEvent, SourceDocument } from '@/lib/api/types'
 import { dateTime, plural, relativeTime } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
+import { LifecycleNavigator } from './LifecycleNavigator'
 
 function StatCard({ label, value, icon }: { label: string; value: ReactNode; icon: ReactNode }) {
   return (
@@ -160,6 +161,8 @@ export function WorkspacePage() {
           <StatCard label="Draft revision" value={`r${activeOntology.draft_revision}`} icon={<GitBranch />} />
         </div>
       ) : null}
+
+      <LifecycleNavigator key={project.id} projectId={project.id} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">

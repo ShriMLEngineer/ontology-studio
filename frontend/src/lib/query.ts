@@ -48,6 +48,7 @@ export const queryKeys = {
   kgElement: (buildId: string, elementId: string, deploymentId?: string) =>
     ['kg-builds', buildId, 'element', elementId, deploymentId ?? 'canonical'] as const,
   kgDeployments: (buildId: string) => ['kg-builds', buildId, 'deployments'] as const,
+  lifecycle: (projectId: string, iterationId?: string) => ['projects', projectId, 'lifecycle', iterationId ?? 'active'] as const,
   kgCompatibility: (buildId: string, target: string, mapping: string) => ['kg-builds', buildId, 'compatibility', target, mapping] as const,
   graphCapabilities: ['kg', 'graph-capabilities'] as const,
   kgEvaluation: (buildId: string) => ['kg-builds', buildId, 'evaluation'] as const,

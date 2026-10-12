@@ -554,3 +554,27 @@ update form is rejected; federated `SERVICE` calls are refused; results are capp
 against the deployment's graphs (default graph = data graph) through the same adapter as the
 deployment. No query is ever sent to a store as an update.
 
+
+## ADR-051 Lifecycle iterations are time windows; stage statuses are derived and frozen at closure
+**Status:** Accepted (Phase 4; user requirement)
+
+**Decision.** An iteration is a numbered time window of a project with a start stage. Stage statuses
+are computed from the records created in the active iteration's window (no stage state is entered by
+hand). When a new iteration starts, the active one is closed and its computed statuses are stored as
+a snapshot, so history never changes afterwards. The new iteration records the latest outputs of the
+stages before its start stage as *reused*, with references (document ids, version, mapping ids,
+build id, deployment ids); a start stage whose prerequisite output does not exist is refused.
+
+**Alternatives.** Recomputing closed iterations from historical records - rejected: element edits
+change the draft revision without an event, so earlier draft states cannot be reconstructed
+exactly. Manually set stage statuses - rejected: they drift from reality.
+
+## ADR-052 Six stage statuses with explicit precedence
+**Status:** Accepted (Phase 4)
+
+**Decision.** For each stage: *in progress* (running work) → *blocked* (failed attempt, failed gate
+or missing configuration) → *outdated* (output older than its inputs, including reused outputs and
+deployments/evaluations of an outdated build) → *completed* → *reused* → *pending*. Waiting for an
+upstream stage is *pending*, not *blocked*, so a fresh iteration is not shown as a wall of failures.
+Discovery and SME review are optional stages. Mappings count as current when a completed build of the
+latest version re-checked them after their last change.
