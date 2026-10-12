@@ -230,5 +230,5 @@ without breaking Phase 1-3 data or behaviour. Baseline: the approved
 
 Quality gates: `pytest` (231 tests, 62 new in Phase 4), `ruff check`, `alembic check` (no drift), `npm run build`,
 `npm run lint`, and on fresh databases `npm run e2e:semantic` (23 steps, real local LLM test), `e2e:graphs` (9 steps,
-real Oxigraph SPARQL server), `e2e:lifecycle` (8 steps), `e2e:kg` (17 steps, structured sources, unchanged 51/4/2) and
-`e2e:journey` (15 steps).
+real Oxigraph SPARQL server), `e2e:lifecycle` (8 steps), `e2e:kg` (17 steps, structured sources, unchanged 51/4/2),
+`e2e:journey` (15 steps) and `e2e:governance` (15 steps, real `qwen2.5:7b`: 8 findings, 8 proposals).
