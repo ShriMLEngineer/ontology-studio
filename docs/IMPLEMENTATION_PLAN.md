@@ -66,7 +66,7 @@ Quality gates: `pytest` (55 tests), `npm run build` (tsc + Vite), `npm run lint`
 
 | Area | Delivered |
 |---|---|
-| LLM integration | `LLMProvider` protocol; OpenAI-compatible provider (JSON Schema / JSON mode / prompt), `$ref` inlining for grammar engines, Pydantic validation with a repair attempt, typed transport/output errors, status endpoint with connectivity check; configuration only via `OLS_LLM_*` |
+| LLM integration | `LLMProvider` protocol; legacy OpenAI-compatible provider plus registered OpenAI, Anthropic, Azure AI Foundry and Ollama adapters; Pydantic-validated structured output, typed/sanitized errors, provider-specific connection tests, secret-by-environment-variable references, and separate discovery/KG project defaults |
 | Source documents | Upload (multipart, 10 MB) of txt/md/csv/tsv/json/pdf behind a `DocumentParser` protocol; SHA-256 de-duplication; paragraph-aware chunks with offsets and pages |
 | AI discovery | Background runs against the draft or a published version with optional SME focus; batched, domain-independent prompts; progress, token usage and discarded findings recorded per run |
 | Evidence grounding | Every quote located in the source (exact or strict fuzzy); exact source spans with context and offsets stored; ungrounded findings discarded with reasons |
@@ -88,7 +88,7 @@ Quality gates: `pytest` (55 tests), `npm run build` (tsc + Vite), `npm run lint`
 | AI proposals never update published ontologies | `test_applying_proposals_after_publication_changes_only_the_draft`; E2E step 9 |
 | Publication blocked by validation errors | `test_publish_is_blocked_by_validation_errors`; publish preview in E2E step 12 |
 | Immutable published versions, history, comparison, RDF/Turtle export | `test_registry.py` (immutability at API, ORM, SQL trigger and FK level; tamper detection; RDF round trip); E2E steps 12-15 |
-| Configurable LLM provider with Pydantic-validated structured output; no fabricated results | `test_llm_provider.py`; `503 LLM_NOT_CONFIGURED` test; live Ollama runs |
+| Configurable LLM providers with Pydantic-validated structured output; no fabricated results | `test_llm_provider.py`, `test_llm_providers.py`, registry migration tests, `503 LLM_NOT_CONFIGURED` test; live Ollama runs |
 
 Quality gates: `pytest` (127 tests), `ruff check`, `npm run build`, `npm run lint`,
 `npm run e2e:journey` (15 steps), `npm run e2e:governance` (15 steps, real LLM).

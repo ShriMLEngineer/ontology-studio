@@ -69,3 +69,7 @@ class LLMProvider(Protocol):
     ) -> StructuredResult[T]:
         """Return ``schema`` parsed and validated from the model's reply."""
         ...
+
+    def check_connection(self, timeout: float = 10.0) -> tuple[bool, str, bool | None]:
+        """Test authenticated access to this configured model, not just the endpoint."""
+        ...

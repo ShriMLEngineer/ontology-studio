@@ -5,7 +5,6 @@ that is not available (for example a reachable Neo4j server to implement and ver
 against) are listed as *not available* with the reason - no integration is simulated.
 """
 
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +15,8 @@ import httpx2
 from pyoxigraph import Store
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.core.secrets import get_secret, secret_is_set
 
 GraphModel = Literal["rdf", "property-graph"]
 
@@ -178,7 +179,7 @@ def sparql_auth(config: dict[str, Any], secret_env: str | None) -> tuple[str, st
     username = (config.get("username") or "").strip()
     if not username:
         return None
-    password = os.environ.get(secret_env or "", "") if secret_env else ""
+    password = (get_secret(secret_env) or "") if secret_env else ""
     return username, password
 
 
@@ -186,7 +187,7 @@ def check_sparql_http(config: dict[str, Any], secret_env: str | None, timeout: f
     query_url = (config.get("query_url") or "").strip()
     if not query_url:
         return ConnectionResult(False, "The query endpoint URL is missing.")
-    if secret_env and config.get("username") and secret_env not in os.environ:
+    if secret_env and config.get("username") and not secret_is_set(secret_env):
         return ConnectionResult(False, f"Environment variable {secret_env} is not set on the server.")
 
     def run() -> ConnectionResult:

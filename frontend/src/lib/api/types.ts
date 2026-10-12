@@ -44,6 +44,8 @@ export interface Project {
   business_domain: string
   ontology_count: number
   default_llm_config_id: string
+  default_discovery_llm_config_id: string
+  default_kg_llm_config_id: string
   default_graph_connection_id: string
   data_namespace: string | null
   created_at: string
@@ -73,6 +75,8 @@ export interface ProjectCreate {
   business_domain?: string
   initial_ontology?: OntologyMetadata | null
   default_llm_config_id?: string | null
+  default_discovery_llm_config_id?: string | null
+  default_kg_llm_config_id?: string | null
   default_graph_connection_id?: string | null
 }
 
@@ -1364,17 +1368,19 @@ export interface LlmConfig {
   id: string
   name: string
   builtin: boolean
-  provider: string
+  provider: 'openai' | 'anthropic' | 'azure-foundry' | 'ollama' | 'openai-compatible'
   base_url: string | null
   model: string | null
   api_key_env: string | null
   api_key_present: boolean | null
+  provider_config: Record<string, unknown>
   structured_output: string
   temperature: number
   timeout_seconds: number
   max_output_tokens: number
   description: string
   configured: boolean
+  enabled: boolean
   last_test: ConnectionTest | null
   used_by_projects: string[]
   updated_by: string
@@ -1383,9 +1389,11 @@ export interface LlmConfig {
 
 export interface LlmConfigInput {
   name: string
-  base_url: string
+  provider: LlmConfig['provider']
+  base_url?: string | null
   model: string
   api_key_env?: string | null
+  provider_config: Record<string, unknown>
   structured_output: 'json_schema' | 'json_object' | 'prompt'
   temperature: number
   timeout_seconds: number
@@ -1441,14 +1449,20 @@ export interface GraphConnectionInput {
 export interface ProjectDefaults {
   project_id: string
   default_llm_config_id: string
+  default_discovery_llm_config_id: string
+  default_kg_llm_config_id: string
   default_graph_connection_id: string
   data_namespace: string | null
   effective_llm: LlmConfig
+  effective_discovery_llm: LlmConfig
+  effective_kg_llm: LlmConfig
   effective_graph: GraphConnection
 }
 
 export interface ProjectDefaultsUpdate {
   default_llm_config_id?: string | null
+  default_discovery_llm_config_id?: string | null
+  default_kg_llm_config_id?: string | null
   default_graph_connection_id?: string | null
   data_namespace?: string | null
 }

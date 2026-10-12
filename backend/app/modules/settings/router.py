@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.db.session import get_session
@@ -27,6 +28,11 @@ def get_settings_service(request: Request, session: Annotated[Session, Depends(g
 
 Service = Annotated[SettingsService, Depends(get_settings_service)]
 Actor = Annotated[str, Query(max_length=200)]
+
+
+class LlmActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
 
 
 # ---------------------------------------------------------------------------------- LLM
@@ -61,8 +67,15 @@ def delete_llm(config_id: str, service: Service, actor: Actor = "") -> Response:
 
 @router.post("/settings/llm-configurations/{config_id}/test", response_model=LlmConfigRead)
 def test_llm(config_id: str, service: Service) -> LlmConfigRead:
-    """Probe the endpoint's OpenAI-compatible /models API and check that the model is listed."""
+    """Explicitly verify authenticated access to the configured provider/model."""
     return service.test_llm(config_id)
+
+
+@router.post("/settings/llm-configurations/{config_id}/activation", response_model=LlmConfigRead)
+def set_llm_activation(
+    config_id: str, data: LlmActivation, service: Service, actor: Actor = ""
+) -> LlmConfigRead:
+    return service.set_llm_enabled(config_id, data.enabled, actor)
 
 
 # ---------------------------------------------------------------------------------- graph databases

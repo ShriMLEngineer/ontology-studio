@@ -16,4 +16,6 @@ class Project(TimestampMixin, Base):
     data_namespace: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Registered configurations (Settings) or built-in ids; NULL = environment default LLM / local SQL graph.
     default_llm_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    default_discovery_llm_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    default_kg_llm_config_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     default_graph_connection_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

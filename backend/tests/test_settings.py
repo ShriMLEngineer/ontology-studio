@@ -97,6 +97,19 @@ def test_llm_configurations_are_registered_tested_and_protected(client: TestClie
     assert invalid.status_code == 422
 
 
+def test_pasted_secret_in_credential_field_is_rejected_without_being_echoed(client: TestClient) -> None:
+    pasted = "FAKE-pasted-secret-value_that-must-never-be-echoed"
+    for path, body in (
+        ("/api/settings/llm-configurations", {"name": "Oops", "provider": "openai", "model": "m", "api_key_env": pasted}),
+        ("/api/settings/graph-connections", {"name": "Oops", "kind": "sparql-http", "secret_env": pasted}),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 422
+        assert pasted not in response.text
+        messages = " ".join(error["message"] for error in response.json()["error"]["details"]["errors"])
+        assert "NAME of a server environment variable" in messages
+
+
 def test_graph_connections_offer_only_available_adapters(client: TestClient, harness: str) -> None:
     kinds = {k["id"]: k for k in client.get("/api/settings/graph-kinds").json()}
     assert kinds["sparql-http"]["registrable"] and kinds["sparql-http"]["available"]

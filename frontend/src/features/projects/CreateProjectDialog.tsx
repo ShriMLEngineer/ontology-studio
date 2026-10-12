@@ -30,7 +30,8 @@ interface FormState {
   ontologyName: string
   namespace: string
   prefix: string
-  llmConfigId: string
+  discoveryLlmConfigId: string
+  kgLlmConfigId: string
   graphConnectionId: string
 }
 
@@ -41,7 +42,8 @@ const EMPTY: FormState = {
   ontologyName: '',
   namespace: '',
   prefix: '',
-  llmConfigId: 'env-default',
+  discoveryLlmConfigId: 'env-default',
+  kgLlmConfigId: 'env-default',
   graphConnectionId: 'local-sql',
 }
 
@@ -79,7 +81,8 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
           prefix: form.prefix,
           description: '',
         },
-        default_llm_config_id: form.llmConfigId,
+        default_discovery_llm_config_id: form.discoveryLlmConfigId,
+        default_kg_llm_config_id: form.kgLlmConfigId,
         default_graph_connection_id: form.graphConnectionId,
       }),
     onSuccess: async (project) => {
@@ -199,12 +202,21 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
               Defaults <span className="text-xs font-normal text-muted-foreground">(registered in Settings; changeable later)</span>
             </p>
             <div className="grid gap-1.5">
-              <Label htmlFor="project-llm">LLM model</Label>
+              <Label htmlFor="project-discovery-llm">Ontology Discovery LLM</Label>
               <LlmConfigSelect
-                id="project-llm"
+                id="project-discovery-llm"
                 allowProjectDefault={false}
-                value={form.llmConfigId}
-                onChange={(v) => update({ llmConfigId: v ?? 'env-default' })}
+                value={form.discoveryLlmConfigId}
+                onChange={(v) => update({ discoveryLlmConfigId: v ?? 'env-default' })}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="project-kg-llm">KG Extraction LLM</Label>
+              <LlmConfigSelect
+                id="project-kg-llm"
+                allowProjectDefault={false}
+                value={form.kgLlmConfigId}
+                onChange={(v) => update({ kgLlmConfigId: v ?? 'env-default' })}
               />
             </div>
             <div className="grid gap-1.5">

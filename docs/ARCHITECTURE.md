@@ -29,7 +29,7 @@ flowchart LR
   user([Ontology engineer / SME]) --> ui[React SPA<br/>Vite · TanStack Query · React Flow]
   ui -- "/api (JSON, multipart)" --> api[FastAPI modular monolith]
   api --> db[(SQLite now<br/>PostgreSQL-ready)]
-  api -- OpenAI-compatible --> llm[[LLM provider<br/>Ollama · OpenAI · Azure OpenAI · vLLM]]
+  api --> llm[[LLM provider adapters<br/>OpenAI · Anthropic · Azure AI Foundry · Ollama · legacy compatible]]
   api --> artifacts[(Write-once artifact store<br/>JSON · Turtle)]
   api --> graph[(GraphStore<br/>SqlGraphStore now · Cosmos DB Gremlin later)]
 ```
@@ -47,7 +47,7 @@ flowchart LR
 │   │   │   ├── ontology/        canonical schema model, authoring, drafts
 │   │   │   ├── validation/      structural rules + validation runs
 │   │   │   ├── activity/        append-only audit trail
-│   │   │   ├── llm/             LLMProvider protocol, OpenAI-compatible provider, status API
+│   │   │   ├── llm/             LLMProvider protocol, provider adapters, status API
 │   │   │   ├── sources/         DocumentParser protocol, text/PDF parsing, chunking, uploads
 │   │   │   ├── discovery/       LLM contract, prompts, grounding, alignment, discovery runs
 │   │   │   ├── governance/      change proposals, evidence, decisions, impact, apply
@@ -158,9 +158,9 @@ erDiagram
 | `ontology_shapes` | Authored SHACL node shapes of the draft (target class, severity, message, property constraints as JSON). Generated shapes are derived; imported SHACL lives in `ontology_extension_axioms` (scope `shapes`). |
 | `kg_candidate_facts.lanes` | Phase 4 per-fact lanes: policy (id, relaxed application checks), SHACL results with outcomes, entailment checks and inferred types. NULL for builds evaluated before Phase 4. |
 | `projects.data_namespace` | Optional base for instance IRIs (`{data_namespace}e/{vertex_id}`); default `{ontology IRI}/data/`, frozen per build. |
-| `llm_configurations` | Registered OpenAI-compatible LLM endpoints (base URL, model, structured-output mode, temperature, timeout, token limit) with the **name** of the environment variable that holds the API key; last connection test. |
+| `llm_configurations` | Registered provider, endpoint, model, non-secret provider settings, inference parameters and enabled state, with the **name** of the environment variable that holds any API credential; last connection test. Credential values are never persisted or returned. |
 | `graph_connections` | Registered graph databases (kind, non-secret configuration, environment variable for the password); last connection test. |
-| `projects.default_llm_config_id` / `default_graph_connection_id` | Project defaults; NULL = environment default LLM / local SQL graph. |
+| `projects.default_llm_config_id` / `default_discovery_llm_config_id` / `default_kg_llm_config_id` | Legacy shared and purpose-specific project defaults; NULL resolves to the environment default LLM. Existing shared values are backfilled to both purpose-specific columns by migration 0009. |
 | `kg_source_mappings` | Saved, reusable source-to-ontology mapping (generic spec of entity, attribute and relationship mappings by element id) per structured source. |
 | `kg_builds` | Build configuration (published version, sources, mappings, settings), frozen config snapshot at start (source hashes, mapping specs, LLM provider/model/prompt version), nine stage records, statistics, evaluation, validated LLM outputs, status. |
 | `kg_build_logs` | Append-only execution log per build and stage. |

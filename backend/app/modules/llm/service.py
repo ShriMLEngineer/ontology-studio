@@ -63,7 +63,7 @@ def llm_status(
     request: Request,
     provider: Annotated[LLMProvider | None, Depends(get_llm_provider)],
     session: Annotated[Session, Depends(get_session)],
-    check: Annotated[bool, Query(description="Probe the endpoint's /models API")] = False,
+    check: Annotated[bool, Query(description="Run the configured provider's connection/model check")] = False,
     project_id: Annotated[str | None, Query(description="Report the project's default LLM configuration")] = None,
     config_id: Annotated[str | None, Query(description="Report a specific LLM configuration")] = None,
 ) -> LLMStatus:
@@ -91,8 +91,18 @@ def llm_status(
         structured_output=getattr(provider, "_structured_output", settings.llm_structured_output),
         detail="Configured",
     )
-    if isinstance(provider, OpenAICompatibleProvider):
-        status.endpoint_host = urlsplit(provider.base_url).netloc or provider.base_url
-        if check:
-            status.reachable, status.detail, status.model_available = provider.check_connection()
+    effective_id = settings_service.effective_llm_id(project_id, config_id) if project_id else config_id
+    selected_endpoint = (
+        settings_service.get_llm(effective_id).base_url
+        if effective_id
+        else settings.llm_base_url
+    )
+    if selected_endpoint:
+        endpoint = urlsplit(selected_endpoint)
+        if endpoint.hostname:
+            status.endpoint_host = endpoint.hostname
+            if endpoint.port:
+                status.endpoint_host += f":{endpoint.port}"
+    if check:
+        status.reachable, status.detail, status.model_available = provider.check_connection()
     return status

@@ -6,9 +6,10 @@ environment-variable name only; values are read when a connection is opened or t
 """
 
 import logging
-import os
 import time
+from ipaddress import ip_address
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.core.errors import BusinessRuleError, ConflictError, NotFoundError
 from app.core.ids import utcnow
+from app.core.secrets import get_secret, secret_is_set
 from app.modules.activity.service import record_activity
 from app.modules.graph.targets import (
     BUILTIN_TARGETS,
@@ -25,8 +27,8 @@ from app.modules.graph.targets import (
     check_oxigraph,
     check_sparql_http,
 )
-from app.modules.llm.openai_compatible import OpenAICompatibleProvider
 from app.modules.llm.provider import LLMProvider
+from app.modules.llm.providers import build_registered_provider, provider_snapshot
 from app.modules.projects.models import Project
 from app.modules.settings.models import GraphConnection, LlmConfiguration
 from app.modules.settings.schemas import (
@@ -106,17 +108,25 @@ class SettingsService:
             model=self.env_provider.model if self.env_provider else s.llm_model,
             api_key_env="OLS_LLM_API_KEY" if s.llm_api_key else None,
             api_key_present=bool(s.llm_api_key) if s.llm_api_key else None,
+            provider_config={},
             structured_output=s.llm_structured_output,
             temperature=s.llm_temperature,
             timeout_seconds=s.llm_timeout_seconds,
             max_output_tokens=s.llm_max_output_tokens,
             description="Configured on the server with OLS_LLM_BASE_URL and OLS_LLM_MODEL (read-only here).",
             configured=configured,
+            enabled=configured,
             last_test=_test(self._builtin_tests.get(ENV_DEFAULT_LLM)),
             used_by_projects=self._projects_using("default_llm_config_id", ENV_DEFAULT_LLM),
         )
 
     def _llm_read(self, record: LlmConfiguration) -> LlmConfigRead:
+        required_key = record.provider in {"openai", "anthropic"} or (
+            record.provider == "azure-foundry"
+            and (record.provider_config or {}).get("auth_method", "api_key") == "api_key"
+        )
+        key_available = secret_is_set(record.api_key_env)
+        configured = record.enabled and (key_available if required_key or record.api_key_env else True)
         return LlmConfigRead(
             id=record.id,
             name=record.name,
@@ -125,15 +135,21 @@ class SettingsService:
             base_url=record.base_url,
             model=record.model,
             api_key_env=record.api_key_env,
-            api_key_present=(record.api_key_env in os.environ) if record.api_key_env else None,
+            api_key_present=secret_is_set(record.api_key_env) if record.api_key_env else None,
+            provider_config=record.provider_config or {},
             structured_output=record.structured_output,
             temperature=record.temperature,
             timeout_seconds=record.timeout_seconds,
             max_output_tokens=record.max_output_tokens,
             description=record.description,
-            configured=True,
+            configured=configured,
+            enabled=record.enabled,
             last_test=_test(record.last_test),
-            used_by_projects=self._projects_using("default_llm_config_id", record.id),
+            used_by_projects=sorted({
+                *self._projects_using("default_llm_config_id", record.id),
+                *self._projects_using("default_discovery_llm_config_id", record.id),
+                *self._projects_using("default_kg_llm_config_id", record.id),
+            }),
             updated_by=record.updated_by,
             updated_at=record.updated_at,
         )
@@ -151,10 +167,71 @@ class SettingsService:
     def get_llm(self, config_id: str) -> LlmConfigRead:
         return self._env_llm() if config_id == ENV_DEFAULT_LLM else self._llm_read(self._llm_record(config_id))
 
+    def _normalized_llm_values(self, data: LlmConfigInput) -> dict[str, Any]:
+        values = data.model_dump()
+        provider = values["provider"]
+        base_url = values["base_url"]
+        defaults = {
+            "openai": "https://api.openai.com/v1",
+            "anthropic": "https://api.anthropic.com",
+            "ollama": "http://localhost:11434",
+        }
+        if not base_url:
+            base_url = defaults.get(provider)
+        if not base_url:
+            raise BusinessRuleError("An endpoint URL is required for this provider.", code="LLM_ENDPOINT_REQUIRED")
+        parts = urlsplit(base_url)
+        if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+            raise BusinessRuleError("Enter a valid provider endpoint URL without credentials or query parameters.",
+                                    code="LLM_ENDPOINT_INVALID")
+        local_ollama = provider == "ollama" and (
+            parts.hostname.lower() == "localhost" or parts.hostname.lower().endswith(".localhost")
+            or (self._is_ip(parts.hostname) and not ip_address(parts.hostname).is_global)
+        )
+        if provider != "openai-compatible":
+            if parts.scheme != "https" and not local_ollama:
+                raise BusinessRuleError("Provider endpoints must use HTTPS; HTTP is only allowed for local Ollama.",
+                                        code="LLM_ENDPOINT_INSECURE")
+            if self._is_ip(parts.hostname) and not ip_address(parts.hostname).is_global and not local_ollama:
+                raise BusinessRuleError("Private and loopback addresses are not allowed for this provider.",
+                                        code="LLM_ENDPOINT_UNSAFE")
+        config = dict(values.get("provider_config") or {})
+        if provider == "azure-foundry":
+            deployment = config.get("deployment_type")
+            if deployment not in {"azure-openai", "openai-compatible", "anthropic"}:
+                raise BusinessRuleError("Select a supported Azure deployment/API type.",
+                                        code="AZURE_DEPLOYMENT_TYPE_REQUIRED")
+            auth = config.get("auth_method", "api_key")
+            if auth not in {"api_key", "entra_id"}:
+                raise BusinessRuleError("Azure authentication must be API key or Microsoft Entra ID.",
+                                        code="AZURE_AUTH_INVALID")
+            config["auth_method"] = auth
+            if auth == "api_key" and not values.get("api_key_env"):
+                raise BusinessRuleError("Set the environment-variable name holding the Azure API key.",
+                                        code="LLM_CREDENTIAL_REQUIRED")
+            if deployment == "anthropic" and auth == "entra_id":
+                config.setdefault("resource", parts.hostname.split(".")[0])
+        elif provider in {"openai", "anthropic"} and not values.get("api_key_env"):
+            raise BusinessRuleError("Set the environment-variable name holding the provider API key.",
+                                    code="LLM_CREDENTIAL_REQUIRED")
+        if provider == "ollama":
+            config["inference_parameters"] = dict(config.get("inference_parameters") or {})
+        values["base_url"] = base_url.rstrip("/")
+        values["provider_config"] = config
+        return values
+
+    @staticmethod
+    def _is_ip(host: str) -> bool:
+        try:
+            ip_address(host)
+            return True
+        except ValueError:
+            return False
+
     def create_llm(self, data: LlmConfigInput, actor: str) -> LlmConfigRead:
         if self._name_taken(LlmConfiguration, data.name):
             raise ConflictError(f"An LLM configuration named '{data.name}' already exists.", code="LLM_CONFIG_NAME_TAKEN")
-        record = LlmConfiguration(**data.model_dump(), updated_by=actor)
+        record = LlmConfiguration(**self._normalized_llm_values(data), updated_by=actor)
         self.session.add(record)
         self.session.flush()
         _audit(event_type="settings.llm_registered", summary=f"LLM configuration '{record.name}' registered",
@@ -168,7 +245,7 @@ class SettingsService:
         record = self._llm_record(config_id)
         if self._name_taken(LlmConfiguration, data.name, exclude=record.id):
             raise ConflictError(f"An LLM configuration named '{data.name}' already exists.", code="LLM_CONFIG_NAME_TAKEN")
-        values = data.model_dump()
+        values = self._normalized_llm_values(data)
         changed = sorted(k for k, v in values.items() if getattr(record, k) != v)
         for key, value in values.items():
             setattr(record, key, value)
@@ -181,11 +258,46 @@ class SettingsService:
         self.session.commit()
         return self._llm_read(record)
 
+    def set_llm_enabled(self, config_id: str, enabled: bool, actor: str) -> LlmConfigRead:
+        if config_id == ENV_DEFAULT_LLM:
+            raise BusinessRuleError("The environment default is configured on the server.", code="BUILTIN_READ_ONLY")
+        record = self._llm_record(config_id)
+        if record.enabled == enabled:
+            return self._llm_read(record)
+        if not enabled and self._llm_projects_using(config_id):
+            raise ConflictError(
+                "Choose another project default before deactivating this configuration.",
+                code="LLM_CONFIG_IN_USE",
+                details={"projects": self._llm_projects_using(config_id)},
+            )
+        record.enabled = enabled
+        record.last_test = None
+        record.updated_by = actor
+        _audit(
+            event_type="settings.llm_activated" if enabled else "settings.llm_deactivated",
+            summary=f"LLM configuration '{record.name}' {'activated' if enabled else 'deactivated'}",
+            details={"config_id": record.id, "actor": actor},
+        )
+        self.session.commit()
+        return self._llm_read(record)
+
+    def _llm_projects_using(self, config_id: str) -> list[str]:
+        ids = (
+            self._projects_using("default_llm_config_id", config_id)
+            + self._projects_using("default_discovery_llm_config_id", config_id)
+            + self._projects_using("default_kg_llm_config_id", config_id)
+        )
+        return sorted(set(ids))
+
     def delete_llm(self, config_id: str, actor: str) -> None:
         if config_id == ENV_DEFAULT_LLM:
             raise BusinessRuleError("The environment default cannot be deleted.", code="BUILTIN_READ_ONLY")
         record = self._llm_record(config_id)
-        users = self._projects_using("default_llm_config_id", config_id)
+        users = sorted({
+            *self._projects_using("default_llm_config_id", config_id),
+            *self._projects_using("default_discovery_llm_config_id", config_id),
+            *self._projects_using("default_kg_llm_config_id", config_id),
+        })
         if users:
             raise ConflictError(
                 f"'{record.name}' is the default LLM of {', '.join(users)}. Choose another default first.",
@@ -202,34 +314,74 @@ class SettingsService:
         if config_id in (None, ENV_DEFAULT_LLM):
             return self.env_provider
         record = self._llm_record(config_id)
-        api_key = os.environ.get(record.api_key_env) if record.api_key_env else None
-        return OpenAICompatibleProvider(
-            base_url=record.base_url,
-            model=record.model,
-            api_key=api_key,
-            structured_output=record.structured_output,  # type: ignore[arg-type]
-            temperature=record.temperature,
-            timeout_seconds=record.timeout_seconds,
-            max_output_tokens=record.max_output_tokens,
-            max_repair_attempts=self.settings.llm_max_repair_attempts,
+        if not record.enabled:
+            raise BusinessRuleError(f"LLM configuration '{record.name}' is deactivated.", code="LLM_CONFIG_DISABLED")
+        api_key = get_secret(record.api_key_env)
+        required_key = record.provider in {"openai", "anthropic"} or (
+            record.provider == "azure-foundry"
+            and (record.provider_config or {}).get("auth_method", "api_key") == "api_key"
         )
+        if (required_key or record.api_key_env) and not api_key:
+            raise BusinessRuleError(
+                f"Environment variable {record.api_key_env or '(not configured)'} is not set on the server.",
+                code="LLM_CREDENTIAL_MISSING",
+            )
+        try:
+            return build_registered_provider(
+                provider=record.provider,
+                base_url=record.base_url,
+                model=record.model,
+                api_key=api_key,
+                provider_config=record.provider_config or {},
+                structured_output=record.structured_output,
+                temperature=record.temperature,
+                timeout_seconds=record.timeout_seconds,
+                max_output_tokens=record.max_output_tokens,
+                max_repair_attempts=self.settings.llm_max_repair_attempts,
+            )
+        except (ImportError, ValueError) as error:
+            raise BusinessRuleError(str(error), code="LLM_CONFIGURATION_INVALID") from error
+
+    def llm_snapshot(self, config_id: str | None) -> dict[str, Any]:
+        if config_id in (None, ENV_DEFAULT_LLM):
+            return {
+                "config_id": ENV_DEFAULT_LLM,
+                "provider": self.env_provider.name if self.env_provider else None,
+                "model": self.env_provider.model if self.env_provider else None,
+                "endpoint": self.settings.llm_base_url,
+                "temperature": self.settings.llm_temperature,
+                "max_output_tokens": self.settings.llm_max_output_tokens,
+                "timeout_seconds": self.settings.llm_timeout_seconds,
+            }
+        record = self._llm_record(config_id)
+        return provider_snapshot(record)
 
     def test_llm(self, config_id: str) -> LlmConfigRead:
-        """Real connection test against the OpenAI-compatible /models API (no completion is requested)."""
-        provider = self.provider_for(config_id)
-        if provider is None:
-            result = ConnectionResult(False, "No LLM is configured on the server (OLS_LLM_BASE_URL, OLS_LLM_MODEL).")
-        elif not isinstance(provider, OpenAICompatibleProvider):
-            result = ConnectionResult(True, f"Configured provider '{provider.name}' does not support a connection probe.")
+        """Run a provider-native authenticated model access check, only on explicit request."""
+        try:
+            provider = self.provider_for(config_id)
+        except BusinessRuleError as error:
+            if error.code not in {"LLM_CREDENTIAL_MISSING", "LLM_CONFIG_DISABLED", "LLM_CONFIGURATION_INVALID"}:
+                raise
+            provider = None
+            configuration_error = str(error)
         else:
-            record = None if config_id == ENV_DEFAULT_LLM else self._llm_record(config_id)
-            if record is not None and record.api_key_env and record.api_key_env not in os.environ:
-                result = ConnectionResult(False, f"Environment variable {record.api_key_env} is not set on the server.")
+            configuration_error = ""
+        if provider is None:
+            if config_id == ENV_DEFAULT_LLM:
+                message = "No LLM is configured on the server (OLS_LLM_BASE_URL, OLS_LLM_MODEL)."
             else:
-                started = time.perf_counter()
-                reachable, detail, available = provider.check_connection(timeout=10.0)
-                ok = reachable and available is not False
-                result = ConnectionResult(ok, detail, int((time.perf_counter() - started) * 1000), {"model_listed": available})
+                message = configuration_error or "The provider is not configured."
+            result = ConnectionResult(False, message)
+        else:
+            started = time.perf_counter()
+            reachable, detail, available = provider.check_connection(timeout=10.0)
+            result = ConnectionResult(
+                reachable and available is not False,
+                detail,
+                int((time.perf_counter() - started) * 1000),
+                {"model_available": available, "model_listed": available},
+            )
         if config_id == ENV_DEFAULT_LLM:
             self._builtin_tests[ENV_DEFAULT_LLM] = _stamp(result)
             return self._env_llm()
@@ -286,7 +438,7 @@ class SettingsService:
             model=kind.model,
             config=dict(record.config or {}),
             secret_env=record.secret_env,
-            secret_present=(record.secret_env in os.environ) if record.secret_env else None,
+            secret_present=secret_is_set(record.secret_env) if record.secret_env else None,
             description=record.description,
             last_test=_test(record.last_test),
             used_by_projects=self._projects_using("default_graph_connection_id", record.id),
@@ -401,7 +553,19 @@ class SettingsService:
 
     def require_llm_id(self, config_id: str | None) -> None:
         if config_id and config_id != ENV_DEFAULT_LLM:
-            self._llm_record(config_id)
+            record = self._llm_record(config_id)
+            if not record.enabled:
+                raise BusinessRuleError(f"LLM configuration '{record.name}' is deactivated.", code="LLM_CONFIG_DISABLED")
+            required_key = record.provider in {"openai", "anthropic"} or (
+                record.provider == "azure-foundry"
+                and (record.provider_config or {}).get("auth_method", "api_key") == "api_key"
+            )
+            if required_key and not secret_is_set(record.api_key_env):
+                raise BusinessRuleError(
+                    f"Configure environment variable {record.api_key_env or '(credential reference required)'} "
+                    "before selecting this LLM.",
+                    code="LLM_CREDENTIAL_MISSING",
+                )
 
     def require_graph_id(self, connection_id: str | None) -> None:
         if connection_id and connection_id not in BUILTIN_TARGETS:
@@ -411,7 +575,13 @@ class SettingsService:
         if requested:
             return requested
         project = self._require_project(project_id)
-        return project.default_llm_config_id or ENV_DEFAULT_LLM
+        return project.default_discovery_llm_config_id or project.default_llm_config_id or ENV_DEFAULT_LLM
+
+    def effective_kg_llm_id(self, project_id: str, requested: str | None = None) -> str:
+        if requested:
+            return requested
+        project = self._require_project(project_id)
+        return project.default_kg_llm_config_id or project.default_llm_config_id or ENV_DEFAULT_LLM
 
     def effective_graph_id(self, project_id: str, requested: str | None = None) -> str:
         if requested:
@@ -421,14 +591,19 @@ class SettingsService:
 
     def project_defaults(self, project_id: str) -> ProjectDefaults:
         project = self._require_project(project_id)
-        llm_id = project.default_llm_config_id or ENV_DEFAULT_LLM
+        discovery_id = project.default_discovery_llm_config_id or project.default_llm_config_id or ENV_DEFAULT_LLM
+        kg_id = project.default_kg_llm_config_id or project.default_llm_config_id or ENV_DEFAULT_LLM
         graph_id = project.default_graph_connection_id or LOCAL_SQL
         return ProjectDefaults(
             project_id=project.id,
-            default_llm_config_id=llm_id,
+            default_llm_config_id=discovery_id,
+            default_discovery_llm_config_id=discovery_id,
+            default_kg_llm_config_id=kg_id,
             default_graph_connection_id=graph_id,
             data_namespace=project.data_namespace,
-            effective_llm=self.get_llm(llm_id),
+            effective_llm=self.get_llm(discovery_id),
+            effective_discovery_llm=self.get_llm(discovery_id),
+            effective_kg_llm=self.get_llm(kg_id),
             effective_graph=self.get_graph(graph_id),
         )
 
@@ -437,7 +612,16 @@ class SettingsService:
         values = data.model_dump(exclude_unset=True)
         if "default_llm_config_id" in values:
             self.require_llm_id(values["default_llm_config_id"])
-            values["default_llm_config_id"] = None if values["default_llm_config_id"] in (None, ENV_DEFAULT_LLM) else values["default_llm_config_id"]
+            value = None if values["default_llm_config_id"] in (None, ENV_DEFAULT_LLM) else values["default_llm_config_id"]
+            values["default_llm_config_id"] = value
+            values.setdefault("default_discovery_llm_config_id", value)
+            values.setdefault("default_kg_llm_config_id", value)
+        for field in ("default_discovery_llm_config_id", "default_kg_llm_config_id"):
+            if field in values:
+                self.require_llm_id(values[field])
+                values[field] = None if values[field] in (None, ENV_DEFAULT_LLM) else values[field]
+        if "default_discovery_llm_config_id" in values:
+            values["default_llm_config_id"] = values["default_discovery_llm_config_id"]
         if "default_graph_connection_id" in values:
             self.require_graph_id(values["default_graph_connection_id"])
             values["default_graph_connection_id"] = None if values["default_graph_connection_id"] in (None, LOCAL_SQL) else values["default_graph_connection_id"]

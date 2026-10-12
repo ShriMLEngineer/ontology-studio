@@ -110,6 +110,17 @@ export function apiUrl(path: string): string {
 }
 
 export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError && Array.isArray(error.details.errors)) {
+    const reasons = (error.details.errors as { location?: string[]; message?: string }[])
+      .slice(0, 3)
+      .map((item) => {
+        const field = (item.location ?? []).filter((part) => part !== 'body').join('.')
+        const reason = (item.message ?? '').replace(/^Value error, /, '')
+        return field ? `${field}: ${reason}` : reason
+      })
+      .filter(Boolean)
+    if (reasons.length) return `${error.message} ${reasons.join(' · ')}`
+  }
   if (error instanceof Error) return error.message
   return 'An unexpected error occurred.'
 }

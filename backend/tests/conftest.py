@@ -5,8 +5,15 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import secrets
 from app.core.config import Settings
 from app.main import create_app
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dotenv_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A developer's real .env must never satisfy a credential reference in tests."""
+    monkeypatch.setattr(secrets, "ENV_FILES", ())
 
 
 def make_settings(db_path: Path, *, seed: bool = False, **overrides: Any) -> Settings:

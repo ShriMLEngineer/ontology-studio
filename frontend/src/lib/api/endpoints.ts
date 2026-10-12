@@ -299,6 +299,8 @@ export const settingsApi = {
     http.put<LlmConfig>(`/settings/llm-configurations/${enc(id)}?actor=${enc(actor)}`, body),
   deleteLlm: (id: string, actor: string) => http.delete(`/settings/llm-configurations/${enc(id)}?actor=${enc(actor)}`),
   testLlm: (id: string) => http.post<LlmConfig>(`/settings/llm-configurations/${enc(id)}/test`),
+  setLlmEnabled: (id: string, enabled: boolean, actor: string) =>
+    http.post<LlmConfig>(`/settings/llm-configurations/${enc(id)}/activation?actor=${enc(actor)}`, { enabled }),
   graphKinds: () => http.get<GraphKind[]>('/settings/graph-kinds'),
   graphConnections: () => http.get<GraphConnection[]>('/settings/graph-connections'),
   createGraph: (body: GraphConnectionInput, actor: string) =>

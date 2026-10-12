@@ -65,16 +65,43 @@ function TestResult({ test }: { test: ConnectionTest | null }) {
   )
 }
 
-function Field({ id, label, hint, children }: { id: string; label: string; hint?: ReactNode; children: ReactNode }) {
+function Field({
+  id,
+  label,
+  hint,
+  error,
+  children,
+}: {
+  id: string
+  label: string
+  hint?: ReactNode
+  error?: string | null
+  children: ReactNode
+}) {
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={id} className="text-xs">
         {label}
       </Label>
       {children}
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {error ? (
+        <p role="alert" className="text-[11px] text-destructive">
+          {error}
+        </p>
+      ) : (
+        hint && <p className="text-[11px] text-muted-foreground">{hint}</p>
+      )}
     </div>
   )
+}
+
+const ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,119}$/
+
+/** Credentials are referenced by environment-variable name; the value must never be typed into Settings. */
+function envNameProblem(value: string | null | undefined): string | null {
+  const name = (value ?? '').trim()
+  if (!name || ENV_VAR_NAME.test(name)) return null
+  return 'Enter the NAME of a server environment variable (e.g. OPENAI_API_KEY), not the key itself. Set the key in the backend’s environment.'
 }
 
 // ------------------------------------------------------------------------------------ project defaults
@@ -83,9 +110,10 @@ function ProjectDefaultsCard({ projectId, projectName }: { projectId: string; pr
   const queryClient = useQueryClient()
   const [reviewer] = useReviewerName()
   const defaults = useProjectDefaults(projectId)
-  const [draft, setDraft] = useState<{ llm: string; graph: string; namespace: string } | null>(null)
+  const [draft, setDraft] = useState<{ discoveryLlm: string; kgLlm: string; graph: string; namespace: string } | null>(null)
   const current = draft ?? {
-    llm: defaults.data?.default_llm_config_id ?? '',
+    discoveryLlm: defaults.data?.default_discovery_llm_config_id ?? '',
+    kgLlm: defaults.data?.default_kg_llm_config_id ?? '',
     graph: defaults.data?.default_graph_connection_id ?? '',
     namespace: defaults.data?.data_namespace ?? '',
   }
@@ -93,7 +121,12 @@ function ProjectDefaultsCard({ projectId, projectName }: { projectId: string; pr
     mutationFn: () =>
       projectsApi.updateDefaults(
         projectId,
-        { default_llm_config_id: current.llm, default_graph_connection_id: current.graph, data_namespace: current.namespace },
+        {
+          default_discovery_llm_config_id: current.discoveryLlm,
+          default_kg_llm_config_id: current.kgLlm,
+          default_graph_connection_id: current.graph,
+          data_namespace: current.namespace,
+        },
         reviewer,
       ),
     onSuccess: () => {
@@ -122,9 +155,22 @@ function ProjectDefaultsCard({ projectId, projectName }: { projectId: string; pr
         ) : defaults.isError ? (
           <ErrorState error={defaults.error} onRetry={() => defaults.refetch()} />
         ) : (
-          <div className="grid gap-4 md:grid-cols-3">
-            <Field id="default-llm" label="Default LLM">
-              <LlmConfigSelect id="default-llm" allowProjectDefault={false} value={current.llm} onChange={(v) => set({ llm: v ?? '' })} />
+          <div className="grid gap-4 md:grid-cols-4">
+            <Field id="default-discovery-llm" label="Ontology Discovery LLM">
+              <LlmConfigSelect
+                id="default-discovery-llm"
+                allowProjectDefault={false}
+                value={current.discoveryLlm}
+                onChange={(v) => set({ discoveryLlm: v ?? '' })}
+              />
+            </Field>
+            <Field id="default-kg-llm" label="KG Extraction LLM">
+              <LlmConfigSelect
+                id="default-kg-llm"
+                allowProjectDefault={false}
+                value={current.kgLlm}
+                onChange={(v) => set({ kgLlm: v ?? '' })}
+              />
             </Field>
             <Field id="default-graph" label="Default graph database">
               <GraphTargetSelect
@@ -147,7 +193,7 @@ function ProjectDefaultsCard({ projectId, projectName }: { projectId: string; pr
                 onChange={(e) => set({ namespace: e.target.value })}
               />
             </Field>
-            <div className="flex items-center justify-end gap-2 md:col-span-3">
+            <div className="flex items-center justify-end gap-2 md:col-span-4">
               {save.isError && <span className="text-xs text-destructive">{errorMessage(save.error)}</span>}
               <Button onClick={() => save.mutate()} disabled={!draft || !reviewer || save.isPending} title={reviewer ? undefined : 'Set your reviewer name first'}>
                 {save.isPending && <Loader2 className="animate-spin" />} Save defaults
@@ -164,9 +210,11 @@ function ProjectDefaultsCard({ projectId, projectName }: { projectId: string; pr
 
 const EMPTY_LLM: LlmConfigInput = {
   name: '',
-  base_url: '',
+  provider: 'ollama',
+  base_url: 'http://localhost:11434',
   model: '',
   api_key_env: '',
+  provider_config: {},
   structured_output: 'json_schema',
   temperature: 0,
   timeout_seconds: 600,
@@ -189,54 +237,107 @@ function LlmDialog({
 }) {
   const [value, setValue] = useState(initial)
   const set = (patch: Partial<LlmConfigInput>) => setValue((v) => ({ ...v, ...patch }))
-  const valid = value.name.trim() && value.base_url.trim() && value.model.trim()
+  const azure = value.provider === 'azure-foundry'
+  const needsEndpoint = azure || value.provider === 'ollama' || value.provider === 'openai-compatible'
+  const needsKey = value.provider === 'openai' || value.provider === 'anthropic' ||
+    (azure && (value.provider_config.auth_method ?? 'api_key') === 'api_key')
+  const keyProblem = needsKey ? envNameProblem(value.api_key_env) : null
+  const valid = value.name.trim() && value.model.trim() && (!needsEndpoint || value.base_url?.trim()) && !keyProblem
+  const selectProvider = (provider: LlmConfigInput['provider']) => {
+    const defaults: Partial<LlmConfigInput> = {
+      provider,
+      base_url:
+        provider === 'openai' ? 'https://api.openai.com/v1' :
+          provider === 'anthropic' ? 'https://api.anthropic.com' :
+            provider === 'ollama' ? 'http://localhost:11434' : '',
+      api_key_env:
+        provider === 'openai' ? 'OPENAI_API_KEY' :
+          provider === 'anthropic' ? 'ANTHROPIC_API_KEY' :
+            provider === 'azure-foundry' ? 'AZURE_FOUNDRY_API_KEY' : '',
+      provider_config: provider === 'azure-foundry'
+        ? { deployment_type: 'azure-openai', auth_method: 'api_key', inference_parameters: {} }
+        : { inference_parameters: {} },
+    }
+    set(defaults)
+  }
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg" data-testid="llm-dialog">
         <DialogHeader>
           <DialogTitle>{initial.name ? `Edit ${initial.name}` : 'Register an LLM'}</DialogTitle>
           <DialogDescription>
-            Any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, Azure OpenAI, OpenAI). The API key stays on the
-            server: enter the name of the environment variable that holds it.
+            Choose a provider-specific adapter. Credentials remain on the server; store only the environment-variable
+            name here. Connection testing checks model access, not extraction quality.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
           <Field id="llm-name" label="Name">
             <Input id="llm-name" value={value.name} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <Field id="llm-base-url" label="Base URL">
-            <Input
-              id="llm-base-url"
-              className="font-mono text-xs"
-              placeholder="http://localhost:11434/v1"
-              value={value.base_url}
-              onChange={(e) => set({ base_url: e.target.value })}
-            />
+          <Field id="llm-provider" label="Provider">
+            <NativeSelect
+              id="llm-provider"
+              value={value.provider}
+              disabled={initial.provider === 'openai-compatible'}
+              onChange={(e) => selectProvider(e.target.value as LlmConfigInput['provider'])}
+            >
+              {value.provider === 'openai-compatible' && <option value="openai-compatible">OpenAI-compatible (legacy)</option>}
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="azure-foundry">Azure AI Foundry</option>
+              <option value="ollama">Ollama</option>
+            </NativeSelect>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field id="llm-model" label="Model">
               <Input id="llm-model" className="font-mono text-xs" placeholder="qwen2.5:7b" value={value.model} onChange={(e) => set({ model: e.target.value })} />
             </Field>
-            <Field id="llm-key-env" label="API key environment variable">
+            {needsKey && <Field id="llm-key-env" label="Credential environment variable" error={keyProblem}>
               <Input
                 id="llm-key-env"
                 className="font-mono text-xs"
-                placeholder="OLS_MY_LLM_KEY (optional)"
+                placeholder="SERVER_SIDE_API_KEY"
+                autoComplete="off"
+                aria-invalid={Boolean(keyProblem)}
                 value={value.api_key_env ?? ''}
                 onChange={(e) => set({ api_key_env: e.target.value })}
               />
-            </Field>
-            <Field id="llm-structured" label="Structured output">
-              <NativeSelect
-                id="llm-structured"
-                value={value.structured_output}
-                onChange={(e) => set({ structured_output: e.target.value as LlmConfigInput['structured_output'] })}
-              >
-                <option value="json_schema">JSON schema</option>
-                <option value="json_object">JSON object</option>
-                <option value="prompt">Prompt only</option>
-              </NativeSelect>
-            </Field>
+            </Field>}
+            {needsEndpoint && <Field id="llm-base-url" label={azure ? 'Foundry endpoint URL' : 'Base URL'}>
+              <Input
+                id="llm-base-url"
+                className="font-mono text-xs"
+                placeholder={value.provider === 'ollama' ? 'http://localhost:11434' : 'https://resource.services.ai.azure.com'}
+                value={value.base_url ?? ''}
+                onChange={(e) => set({ base_url: e.target.value })}
+              />
+            </Field>}
+            {azure && <>
+              <Field id="llm-azure-api" label="Deployment/API type">
+                <NativeSelect
+                  id="llm-azure-api"
+                  value={String(value.provider_config.deployment_type ?? 'azure-openai')}
+                  onChange={(e) => set({ provider_config: { ...value.provider_config, deployment_type: e.target.value } })}
+                >
+                  <option value="azure-openai">Azure OpenAI deployment</option>
+                  <option value="openai-compatible">Foundry OpenAI-compatible model</option>
+                  <option value="anthropic">Anthropic Claude in Foundry</option>
+                </NativeSelect>
+              </Field>
+              <Field id="llm-azure-auth" label="Authentication">
+                <NativeSelect
+                  id="llm-azure-auth"
+                  value={String(value.provider_config.auth_method ?? 'api_key')}
+                  onChange={(e) => set({
+                    provider_config: { ...value.provider_config, auth_method: e.target.value },
+                    api_key_env: e.target.value === 'api_key' ? 'AZURE_FOUNDRY_API_KEY' : '',
+                  })}
+                >
+                  <option value="api_key">API key</option>
+                  <option value="entra_id">Microsoft Entra ID (server DefaultAzureCredential)</option>
+                </NativeSelect>
+              </Field>
+            </>}
             <Field id="llm-temperature" label="Temperature">
               <Input
                 id="llm-temperature"
@@ -261,6 +362,48 @@ function LlmDialog({
               />
             </Field>
           </div>
+          <details className="rounded-md border px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium">Advanced inference settings</summary>
+            <div className="grid grid-cols-2 gap-3 pt-3">
+              <Field id="llm-top-p" label="Top P (optional)">
+                <Input
+                  id="llm-top-p"
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={String((value.provider_config.inference_parameters as Record<string, unknown> | undefined)?.top_p ?? '')}
+                  onChange={(e) => set({
+                    provider_config: {
+                      ...value.provider_config,
+                      inference_parameters: {
+                        ...(value.provider_config.inference_parameters as Record<string, unknown> | undefined),
+                        top_p: e.target.value === '' ? undefined : Number(e.target.value),
+                      },
+                    },
+                  })}
+                />
+              </Field>
+              {value.provider === 'anthropic' && <Field id="llm-top-k" label="Top K (optional)">
+                <Input
+                  id="llm-top-k"
+                  type="number"
+                  min={0}
+                  value={String((value.provider_config.inference_parameters as Record<string, unknown> | undefined)?.top_k ?? '')}
+                  onChange={(e) => set({
+                    provider_config: {
+                      ...value.provider_config,
+                      inference_parameters: {
+                        ...(value.provider_config.inference_parameters as Record<string, unknown> | undefined),
+                        top_k: e.target.value === '' ? undefined : Number(e.target.value),
+                      },
+                    },
+                  })}
+                />
+              </Field>}
+            </div>
+            <p className="pt-2 text-[11px] text-muted-foreground">Only parameters supported by the selected provider adapter are sent.</p>
+          </details>
           <Field id="llm-description" label="Description">
             <Textarea id="llm-description" rows={2} value={value.description} onChange={(e) => set({ description: e.target.value })} />
           </Field>
@@ -274,7 +417,18 @@ function LlmDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!valid || saving} onClick={() => onSave({ ...value, api_key_env: value.api_key_env?.trim() || null })}>
+          <Button disabled={!valid || saving} onClick={() => onSave({
+            ...value,
+            base_url: value.base_url?.trim() || null,
+            api_key_env: value.api_key_env?.trim() || null,
+            provider_config: {
+              ...value.provider_config,
+              inference_parameters: Object.fromEntries(
+                Object.entries((value.provider_config.inference_parameters as Record<string, unknown> | undefined) ?? {})
+                  .filter(([, item]) => item !== undefined && item !== ''),
+              ),
+            },
+          })}>
             {saving && <Loader2 className="animate-spin" />} Save
           </Button>
         </DialogFooter>
@@ -319,6 +473,14 @@ function LlmCard() {
     onError: (error) => toast.error('Cannot delete', { description: errorMessage(error) }),
     onSettled: () => setDeleting(null),
   })
+  const activation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => settingsApi.setLlmEnabled(id, enabled, reviewer),
+    onSuccess: (config) => {
+      toast.success(config.enabled ? 'LLM configuration activated' : 'LLM configuration deactivated')
+      refresh()
+    },
+    onError: (error) => toast.error('Cannot change activation', { description: errorMessage(error) }),
+  })
   return (
     <Card data-testid="llm-configurations">
       <CardHeader className="flex flex-row items-start justify-between gap-3">
@@ -326,7 +488,7 @@ function LlmCard() {
           <CardTitle className="flex items-center gap-2">
             <Bot className="size-4" /> LLM models
           </CardTitle>
-          <CardDescription>Shared by all projects. Tests call the endpoint's model list; no prompt is sent.</CardDescription>
+          <CardDescription>Shared by projects. Test Connection verifies authenticated access to the selected model.</CardDescription>
         </div>
         <Button size="sm" onClick={() => setEditing('new')} disabled={!reviewer} title={reviewer ? undefined : 'Set your reviewer name first'}>
           <Plus /> Register LLM
@@ -344,18 +506,27 @@ function LlmCard() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{c.name}</span>
                   {c.builtin && <Badge variant="secondary">Built-in</Badge>}
+                  {!c.enabled && <Badge variant="outline">Deactivated</Badge>}
                   {!c.configured && <Badge variant="outline">Not configured</Badge>}
                   <div className="ml-auto flex gap-1">
                     <Button
                       variant="outline"
                       size="xs"
                       onClick={() => test.mutate(c.id)}
-                      disabled={!c.configured || (test.isPending && test.variables === c.id)}
+                      disabled={!c.enabled || (test.isPending && test.variables === c.id)}
                     >
                       {test.isPending && test.variables === c.id ? <Loader2 className="animate-spin" /> : <PlugZap />} Test
                     </Button>
                     {!c.builtin && (
                       <>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => activation.mutate({ id: c.id, enabled: !c.enabled })}
+                          disabled={!reviewer || activation.isPending}
+                        >
+                          {c.enabled ? 'Deactivate' : 'Activate'}
+                        </Button>
                         <Button variant="ghost" size="icon-sm" aria-label={`Edit ${c.name}`} onClick={() => setEditing(c)} disabled={!reviewer}>
                           <Pencil />
                         </Button>
@@ -395,7 +566,9 @@ function LlmCard() {
                   name: editing.name,
                   base_url: editing.base_url ?? '',
                   model: editing.model ?? '',
-                  api_key_env: editing.api_key_env ?? '',
+                    provider: editing.provider,
+                    api_key_env: editing.api_key_env ?? '',
+                    provider_config: editing.provider_config ?? {},
                   structured_output: editing.structured_output as LlmConfigInput['structured_output'],
                   temperature: editing.temperature,
                   timeout_seconds: editing.timeout_seconds,
@@ -454,7 +627,9 @@ function GraphDialog({
   const [value, setValue] = useState<GraphConnectionInput>(initial.kind ? initial : { ...initial, kind: registrable[0]?.id ?? '' })
   const kind = kinds.find((k) => k.id === value.kind)
   const set = (patch: Partial<GraphConnectionInput>) => setValue((v) => ({ ...v, ...patch }))
-  const valid = value.name.trim() && kind && kind.fields.every((f) => f.secret || !f.required || value.config[f.key]?.trim())
+  const secretProblem = envNameProblem(value.secret_env)
+  const valid =
+    value.name.trim() && kind && !secretProblem && kind.fields.every((f) => f.secret || !f.required || value.config[f.key]?.trim())
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg" data-testid="graph-dialog">
@@ -477,11 +652,13 @@ function GraphDialog({
           </Field>
           {kind?.fields.map((f) =>
             f.secret ? (
-              <Field key={f.key} id={`graph-${f.key}`} label={f.label}>
+              <Field key={f.key} id={`graph-${f.key}`} label={f.label} error={secretProblem}>
                 <Input
                   id={`graph-${f.key}`}
                   className="font-mono text-xs"
                   placeholder={f.placeholder}
+                  autoComplete="off"
+                  aria-invalid={Boolean(secretProblem)}
                   value={value.secret_env ?? ''}
                   onChange={(e) => set({ secret_env: e.target.value })}
                 />

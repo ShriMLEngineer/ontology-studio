@@ -82,18 +82,19 @@ class BuildResources:
             self.settings.require_graph_id(settings.graph_connection_id)
 
     def provider(self, build: KgBuild) -> LLMProvider | None:
-        config_id = self.settings.effective_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
+        config_id = self.settings.effective_kg_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
         try:
             return self.settings.provider_for(config_id)
         except NotFoundError:
             return None  # deleted configuration: readiness reports that no LLM is available
 
     def selection(self, build: KgBuild) -> dict[str, Any]:
-        llm_id = self.settings.effective_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
+        llm_id = self.settings.effective_kg_llm_id(build.project_id, (build.settings or {}).get("llm_config_id"))
         graph_id = self.settings.effective_graph_id(build.project_id, (build.settings or {}).get("graph_connection_id"))
         graph = self.settings.get_graph(graph_id)
         return {
             "llm_config_id": llm_id,
+            "llm_configuration": self.settings.llm_snapshot(llm_id),
             "graph_target": {
                 "id": graph.id,
                 "name": graph.name,

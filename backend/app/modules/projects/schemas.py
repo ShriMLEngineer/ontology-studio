@@ -19,6 +19,8 @@ class ProjectCreate(BaseModel):
     initial_ontology: OntologyCreate | None = None
     # Registered configurations (Settings); omitted = environment default LLM / local SQL graph.
     default_llm_config_id: str | None = None
+    default_discovery_llm_config_id: str | None = None
+    default_kg_llm_config_id: str | None = None
     default_graph_connection_id: str | None = None
 
 
@@ -37,6 +39,8 @@ class ProjectRead(BaseModel):
     business_domain: str
     ontology_count: int
     default_llm_config_id: str = "env-default"
+    default_discovery_llm_config_id: str = "env-default"
+    default_kg_llm_config_id: str = "env-default"
     default_graph_connection_id: str = "local-sql"
     data_namespace: str | None = None
     created_at: datetime

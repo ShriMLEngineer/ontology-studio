@@ -6,7 +6,7 @@ or password, and the value is read only when a connection is opened or tested.
 
 from typing import Any
 
-from sqlalchemy import JSON, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.ids import new_id
@@ -26,6 +26,8 @@ class LlmConfiguration(TimestampMixin, Base):
     temperature: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     timeout_seconds: Mapped[float] = mapped_column(Float, default=600.0, nullable=False)
     max_output_tokens: Mapped[int] = mapped_column(Integer, default=4096, nullable=False)
+    provider_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     last_test: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(200), default="", nullable=False)

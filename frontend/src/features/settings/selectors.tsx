@@ -30,7 +30,7 @@ export function LlmConfigSelect({
         <option value={PROJECT_DEFAULT}>Project default{projectDefault ? ` (${projectDefault.name})` : ''}</option>
       )}
       {(configs.data ?? []).map((c) => (
-        <option key={c.id} value={c.id} disabled={!c.configured}>
+        <option key={c.id} value={c.id} disabled={!c.configured || !c.enabled}>
           {c.name}
           {c.model ? ` · ${c.model}` : ''}
           {c.configured ? '' : ' (not configured)'}

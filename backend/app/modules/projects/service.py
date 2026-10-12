@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, NotFoundError
+from app.core.secrets import secret_is_set
 from app.modules.activity.service import record_activity
 from app.modules.ontology.repository import OntologyRepository
 from app.modules.ontology.service import OntologyService
@@ -9,11 +10,29 @@ from app.modules.projects.repository import ProjectRepository
 from app.modules.projects.schemas import ProjectCreate, ProjectRead, ProjectUpdate
 
 
-def _require_registered(session: Session, llm_config_id: str | None, graph_connection_id: str | None) -> None:
+def _require_registered(
+    session: Session, llm_config_ids: list[str | None], graph_connection_id: str | None
+) -> None:
     from app.modules.settings.models import GraphConnection, LlmConfiguration
 
-    if llm_config_id not in (None, "env-default") and session.get(LlmConfiguration, llm_config_id) is None:
-        raise NotFoundError(f"LLM configuration '{llm_config_id}' was not found.", code="LLM_CONFIG_NOT_FOUND")
+    for llm_config_id in llm_config_ids:
+        if llm_config_id in (None, "env-default"):
+            continue
+        llm = session.get(LlmConfiguration, llm_config_id)
+        if llm is None:
+            raise NotFoundError(f"LLM configuration '{llm_config_id}' was not found.", code="LLM_CONFIG_NOT_FOUND")
+        if not llm.enabled:
+            raise ConflictError(f"LLM configuration '{llm.name}' is deactivated.", code="LLM_CONFIG_DISABLED")
+        key_required = llm.provider in {"openai", "anthropic"} or (
+            llm.provider == "azure-foundry"
+            and (llm.provider_config or {}).get("auth_method", "api_key") == "api_key"
+        )
+        if key_required and not secret_is_set(llm.api_key_env):
+            raise ConflictError(
+                f"Configure environment variable {llm.api_key_env or '(credential reference required)'} "
+                "before selecting this LLM.",
+                code="LLM_CREDENTIAL_MISSING",
+            )
     if graph_connection_id not in (None, "local-sql", "oxigraph-embedded") and session.get(
         GraphConnection, graph_connection_id
     ) is None:
@@ -35,7 +54,13 @@ class ProjectService:
             description=project.description,
             business_domain=project.business_domain,
             ontology_count=ontology_count,
-            default_llm_config_id=project.default_llm_config_id or "env-default",
+            default_llm_config_id=(
+                project.default_discovery_llm_config_id or project.default_llm_config_id or "env-default"
+            ),
+            default_discovery_llm_config_id=(
+                project.default_discovery_llm_config_id or project.default_llm_config_id or "env-default"
+            ),
+            default_kg_llm_config_id=project.default_kg_llm_config_id or project.default_llm_config_id or "env-default",
             default_graph_connection_id=project.default_graph_connection_id or "local-sql",
             data_namespace=project.data_namespace,
             created_at=project.created_at,
@@ -60,13 +85,23 @@ class ProjectService:
             raise ConflictError(
                 f"A project named '{data.name}' already exists.", code="PROJECT_NAME_TAKEN"
             )
-        _require_registered(self.session, data.default_llm_config_id, data.default_graph_connection_id)
+        discovery_llm = data.default_discovery_llm_config_id or data.default_llm_config_id
+        kg_llm = data.default_kg_llm_config_id or data.default_llm_config_id
+        _require_registered(
+            self.session,
+            [data.default_llm_config_id, discovery_llm, kg_llm],
+            data.default_graph_connection_id,
+        )
         project = self.projects.add(
             Project(
                 name=data.name,
                 description=data.description,
                 business_domain=data.business_domain,
                 default_llm_config_id=None if data.default_llm_config_id in (None, "env-default") else data.default_llm_config_id,
+                default_discovery_llm_config_id=(
+                    None if discovery_llm in (None, "env-default") else discovery_llm
+                ),
+                default_kg_llm_config_id=None if kg_llm in (None, "env-default") else kg_llm,
                 default_graph_connection_id=None
                 if data.default_graph_connection_id in (None, "local-sql")
                 else data.default_graph_connection_id,

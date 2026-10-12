@@ -172,18 +172,23 @@ zero-step local start. Managed environments should set it to `false` and run
 
 # Phase 2 decisions
 
-## ADR-017 LLM access through a provider protocol and the OpenAI-compatible API
-**Status:** Accepted (Phase 2)
+## ADR-017 LLM access through a provider protocol and configurable adapters
+**Status:** Accepted (Phase 2; extended for registered providers)
 
-**Decision.** The application depends on `LLMProvider.generate_structured(system, user, schema)`.
-The only production implementation targets the OpenAI-compatible Chat Completions API, which
-covers OpenAI, Azure OpenAI (v1), Ollama, vLLM and LM Studio. Structured output is requested with
-`response_format` (JSON Schema by default, JSON mode or prompt-only as fallbacks) and always
-re-validated with Pydantic; one repair prompt is sent on invalid output. Without
-`OLS_LLM_BASE_URL` and `OLS_LLM_MODEL` the provider is absent and discovery returns
-`503 LLM_NOT_CONFIGURED`. Automated tests inject an explicit scripted test double; the product
-never fabricates model output. The HTTP client is `httpx2` (the client Starlette recommends), so
-one HTTP library serves runtime and tests.
+**Decision.** Application workflows depend on `LLMProvider.generate_structured(system, user,
+schema)`. The environment default and legacy OpenAI-compatible registrations remain supported.
+Registered configurations additionally select direct OpenAI, direct Anthropic, Azure AI Foundry
+(OpenAI-compatible/Azure OpenAI or Anthropic deployment protocols), or Ollama adapters. Provider
+credentials are referenced by server environment-variable name, never stored in database records,
+API responses, or build snapshots. Structured responses are validated against Pydantic models;
+invalid output may be repaired using a bounded retry. Provider-native connection checks report
+reachability and model access separately from inference. Project settings may choose different
+registrations for ontology discovery and KG extraction. No provider output is fabricated.
+
+**Consequences.** Provider SDKs are isolated in adapters and can be changed without coupling the
+domain workflows to a vendor. Azure deployments and Ollama capabilities vary by model/service;
+unsupported features must fail explicitly instead of being silently translated. Existing
+OpenAI-compatible records and project defaults remain readable through an additive migration.
 
 ## ADR-018 The model suggests; deterministic engineering decides what becomes a proposal
 **Status:** Accepted

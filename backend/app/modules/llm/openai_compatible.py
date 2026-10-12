@@ -86,6 +86,7 @@ class OpenAICompatibleProvider:
         timeout_seconds: float = 600.0,
         max_output_tokens: int = 4096,
         max_repair_attempts: int = 1,
+        inference_parameters: dict[str, Any] | None = None,
         transport: httpx2.BaseTransport | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -96,6 +97,7 @@ class OpenAICompatibleProvider:
         self._timeout = timeout_seconds
         self._max_output_tokens = max_output_tokens
         self._max_repair_attempts = max_repair_attempts
+        self._inference_parameters = inference_parameters or {}
         self._transport = transport
 
     @property
@@ -173,6 +175,7 @@ class OpenAICompatibleProvider:
             "max_tokens": self._max_output_tokens,
             "stream": False,
         }
+        body.update(self._inference_parameters)
         if self._structured_output == "json_schema":
             body["response_format"] = {
                 "type": "json_schema",

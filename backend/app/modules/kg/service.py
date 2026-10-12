@@ -676,12 +676,18 @@ class KgService:
             # Effective LLM configuration and graph target (Settings), frozen at start.
             **(selection or {}),
             "data_namespace": self._data_namespace(build.project_id, version),
-            "llm": {"provider": provider.name, "model": provider.model, "prompt_version": PROMPT_VERSION}
-            if has_text and provider
-            else None,
+            "llm": {
+                "provider": provider.name if provider else (selection or {}).get("llm_configuration", {}).get("provider"),
+                "model": provider.model if provider else (selection or {}).get("llm_configuration", {}).get("model"),
+                "prompt_version": PROMPT_VERSION if has_text and provider else None,
+                "used_for_extraction": bool(has_text and provider),
+                "configuration": (selection or {}).get("llm_configuration"),
+            },
         }
+        if provider is not None:
+            build.provider, build.model = provider.name, provider.model
         if has_text and provider is not None:
-            build.provider, build.model, build.prompt_version = provider.name, provider.model, PROMPT_VERSION
+            build.prompt_version = PROMPT_VERSION
         build.status = "queued"
         build.requested_by = requested_by
         build.stages = initial_stages()

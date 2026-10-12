@@ -12,11 +12,15 @@ dependencies = [
     "alembic>=1.20,<2",
     "httpx2>=2.13",
     "python-multipart>=0.0.32",
+    "python-dotenv>=1.0,<2",
     "pypdf>=6.20,<7",
     "rdflib>=7.6,<8",
     "owlrl>=7.6.2,<8",
     "pyshacl>=0.40,<0.41",
     "pyoxigraph>=0.5,<0.6",
+    "openai>=1.75,<3",
+    "anthropic>=0.75,<1",
+    "azure-identity>=1.19,<2",
 ]
 
 [project.optional-dependencies]
