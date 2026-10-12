@@ -582,6 +582,21 @@ The Studio header offers an ontology switcher when a project has several ontolog
 after an RDF import). The ontology inspector edits the semantic header (ontology IRI, imports,
 prefixes, domain/range policy); element inspectors show the persisted IRI.
 
+**Advanced semantics (Phase 4.3).** Class, relationship and attribute inspectors have a collapsible
+*Advanced semantics (OWL)* section (open when the element already carries OWL semantics):
+equivalent and disjoint classes, a restriction editor (some / only / has value / at least / at most
+/ exactly, qualified or not) that states what each restriction means in plain language, inverse and
+sub-property declarations, the seven property characteristics with their meaning, the OWL
+*functional* flag of attributes (independent of the SHACL *multi-valued* constraint), range
+declaration, deprecation, annotation language and definition predicate. Inspectors show an *IRI
+locked* badge for elements of the latest published version (`locked_iri_ids` of the draft API) and
+the number of preserved axioms that reference the element. The canvas marks classes with ≡
+(equivalent), ⊥ (disjoint), ∃n (restrictions), a lock (published IRI) and a flag (preserved axioms);
+deprecated classes are struck through; relationship labels show ⇄ for declared inverses. The
+**Validation** tab adds separate lanes below the structural report: SHACL-SHACL well-formedness of
+the shapes in the next package (a publication gate), an on-demand OWL 2 RL reasoning check
+(informational) and a pointer to per-fact evidence validation in Knowledge Graph Studio.
+
 The reviewer identifies themselves once (stored locally); the name is recorded on decisions,
 comments, applications and publications. Applying and publishing are blocked while the designer
 has unsaved changes; after applying, the draft reloads into the designer. The header shows the

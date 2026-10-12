@@ -18,6 +18,7 @@ from app.modules.registry.diff import SchemaDiff, bump_version, diff_snapshots, 
 from app.modules.registry.models import OntologyVersion
 from app.modules.semantics.graphs import FORMATS, parse_rdf, serialize
 from app.modules.semantics.owl import ontology_iri_of, snapshot_to_owl
+from app.modules.shacl.engine import check_shapes
 from app.modules.shacl.shapes import build_shapes_graph
 from app.modules.registry.schemas import (
     PublishPreview,
@@ -38,6 +39,12 @@ from app.modules.validation.schemas import Severity
 from app.modules.validation.service import ValidationService
 
 ExportFormat = Literal["turtle", "json", "rdfxml", "jsonld", "ntriples", "shapes", "manifest"]
+
+
+def shapes_problem(snapshot: OntologySnapshot) -> str | None:
+    """SHACL-SHACL meta-validation of the shapes graph the version package would contain."""
+    check = check_shapes(build_shapes_graph(snapshot)[0])
+    return None if check.well_formed else check.message or "the shapes graph does not conform to SHACL-SHACL"
 RDF_EXPORT_FORMATS = ("turtle", "rdfxml", "jsonld", "ntriples")
 DRAFT = "draft"
 PACKAGE_FORMAT = "ols-semantic/2"
@@ -148,6 +155,9 @@ class RegistryService:
         blockers: list[str] = []
         if errors:
             blockers.append(f"{len(errors)} blocking validation error(s) must be fixed.")
+        problem = shapes_problem(snapshot)
+        if problem:
+            blockers.append(f"The SHACL shapes are not well-formed: {problem}")
         if latest and latest.content_hash == content_hash(snapshot):
             blockers.append(f"The draft is identical to the latest published version v{latest.version}.")
         stats = GovernanceService(self.session).stats(ontology_id)
@@ -188,6 +198,12 @@ class RegistryService:
                 f"Publication blocked: the draft has {report.error_count} validation error(s).",
                 code="PUBLISH_BLOCKED_BY_VALIDATION",
                 details={"issues": [i.model_dump(mode="json") for i in report.issues if i.severity == Severity.ERROR]},
+            )
+        problem = shapes_problem(snapshot)
+        if problem:
+            raise BusinessRuleError(
+                f"Publication blocked: the SHACL shapes are not well-formed ({problem}).",
+                code="PUBLISH_BLOCKED_BY_SHAPES",
             )
 
         digest = content_hash(snapshot)

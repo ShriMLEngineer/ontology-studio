@@ -300,6 +300,7 @@ class OntologyService:
             object_properties=schema.object_properties,
             datatype_properties=schema.datatype_properties,
             layout=DiagramLayout.model_validate({"positions": layout.positions or {}}),
+            locked_iri_ids=sorted(self.locked_iris(ontology.id)),
         )
 
     def save_draft(self, ontology_id: str, request: DraftSaveRequest) -> DraftSaveResponse:

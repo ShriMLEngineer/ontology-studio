@@ -578,3 +578,15 @@ deployments/evaluations of an outdated build) → *completed* → *reused* → *
 upstream stage is *pending*, not *blocked*, so a fresh iteration is not shown as a wall of failures.
 Discovery and SME review are optional stages. Mappings count as current when a completed build of the
 latest version re-checked them after their last change.
+
+## ADR-053 Malformed SHACL never reaches a version package
+**Status:** Accepted (Phase 4.3)
+
+**Decision.** The publication preview and publication run SHACL-SHACL meta-validation on the exact
+shapes graph the package would contain (generated, signature, authored and preserved imported
+shapes). Shapes that are not well-formed are a publication blocker
+(`PUBLISH_BLOCKED_BY_SHAPES`), alongside structural validation errors. OWL 2 RL reasoning remains
+informational and never blocks publication (D11).
+
+**Consequences.** Imports already reject malformed SHACL; the gate is defence in depth for data that
+reaches the draft by other paths, so knowledge-graph builds can rely on every published shapes graph.

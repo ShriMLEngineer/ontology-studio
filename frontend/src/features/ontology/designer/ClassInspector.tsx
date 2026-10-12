@@ -31,6 +31,7 @@ import {
   type DraftDoc,
   type ElementSelection,
 } from '../draft/model'
+import { ClassSemanticsEditor, DatatypePropertySemanticsEditor, IriStatus } from './AdvancedSemantics'
 import { AliasEditor, ClassSelect, Field } from './fields'
 import { IssueList } from './IssueList'
 
@@ -96,6 +97,7 @@ export function AttributeEditor({
           onChange={(e) => update({ local_name: e.target.value })}
         />
       </Field>
+      <IriStatus element={attr} />
       {showDomain && (
         <Field id={fid('domain')} label="Domain class">
           <ClassSelect id={fid('domain')} classes={doc.classes} value={attr.domain_id} onChange={(id) => update({ domain_id: id })} />
@@ -117,6 +119,7 @@ export function AttributeEditor({
           onChange={(e) => update({ description: e.target.value })}
         />
       </Field>
+      <DatatypePropertySemanticsEditor doc={doc} attr={attr} dispatch={dispatch} />
     </div>
   )
 }
@@ -199,6 +202,7 @@ export function ClassInspector({
             onChange={(e) => update({ local_name: e.target.value })}
           />
         </Field>
+        <IriStatus element={cls} />
         <Field id="class-description" label="Definition">
           <Textarea
             id="class-description"
@@ -243,6 +247,7 @@ export function ClassInspector({
             onChange={(pid) => update({ parent_ids: [...cls.parent_ids, pid] })}
           />
         </Field>
+        <ClassSemanticsEditor doc={doc} cls={cls} dispatch={dispatch} />
         {dependents.children.length > 0 && (
           <p className="text-xs text-muted-foreground">
             Subclasses:{' '}

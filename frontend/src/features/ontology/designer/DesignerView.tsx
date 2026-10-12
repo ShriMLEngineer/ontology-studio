@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   Background,
   Controls,
@@ -32,7 +33,9 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ApiError, errorMessage } from '@/lib/api/client'
+import { semanticsApi } from '@/lib/api/endpoints'
 import type { Severity, ValidationReport } from '@/lib/api/types'
+import { queryKeys } from '@/lib/query'
 import type { DraftDoc, ElementSelection } from '../draft/model'
 import type { DraftEditor } from '../draft/useDraftEditor'
 import { AddClassDialog } from './AddClassDialog'
@@ -43,6 +46,7 @@ import { ElementOutline } from './ElementOutline'
 import { FloatingEdge } from './FloatingEdge'
 import { buildEdges, buildNodes, findFreePosition, type ClassFlowNode, type OntologyFlowEdge } from './flow'
 import { OntologyInspector } from './OntologyInspector'
+import { DesignerSemanticsContext, type DesignerSemantics } from './semanticContext'
 import { describeChanges } from './presentation'
 import { AttributeInspector, RelationshipInspector } from './RelationshipInspector'
 
@@ -66,11 +70,33 @@ interface DesignerProps {
 }
 
 export function DesignerView(props: DesignerProps) {
+  const semantics = useDesignerSemanticsValue(props.editor)
   return (
-    <ReactFlowProvider>
-      <DesignerWorkspace {...props} />
-    </ReactFlowProvider>
+    <DesignerSemanticsContext.Provider value={semantics}>
+      <ReactFlowProvider>
+        <DesignerWorkspace {...props} />
+      </ReactFlowProvider>
+    </DesignerSemanticsContext.Provider>
   )
+}
+
+/** Locked IRIs come with the saved draft; preserved axioms are read once per ontology. */
+function useDesignerSemanticsValue(editor: DraftEditor): DesignerSemantics {
+  const ontologyId = editor.base?.ontology.id
+  const axioms = useQuery({
+    queryKey: queryKeys.axioms(ontologyId ?? ''),
+    queryFn: () => semanticsApi.axioms(ontologyId!),
+    enabled: Boolean(ontologyId),
+  })
+  const locked = editor.base?.locked_iri_ids
+  const latestVersion = editor.base?.ontology.latest_version?.version ?? null
+  return useMemo(() => {
+    const axiomCounts = new Map<string, number>()
+    for (const axiom of axioms.data ?? []) {
+      for (const id of axiom.anchor_ids) axiomCounts.set(id, (axiomCounts.get(id) ?? 0) + 1)
+    }
+    return { lockedIds: new Set(locked ?? []), axiomCounts, latestVersion }
+  }, [axioms.data, locked, latestVersion])
 }
 
 function DesignerWorkspace({ editor, doc, selection, onSelect, focusRequest, onFocusHandled, report }: DesignerProps) {

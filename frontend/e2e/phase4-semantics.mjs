@@ -5,6 +5,8 @@
  *      axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
  * 4.2  SHACL Shapes tab -> authored shape -> sample-data validation -> shapes.ttl in the package ->
  *      KG build under a SHACL validation policy -> per-fact SHACL lane in Fact Validation.
+ * 4.3  Inspector "Advanced semantics": locked IRI after publication, disjointness and a restriction,
+ *      canvas badges, OWL export; Validation tab with separate SHACL and OWL 2 RL lanes.
  * Settings: fourth navigation section -> register and really test an LLM (local Ollama by default,
  *      E2E_LLM_BASE_URL / E2E_LLM_MODEL) -> built-in Oxigraph -> unreachable SPARQL endpoint reported ->
  *      project default resolved by discovery.
@@ -229,6 +231,37 @@ d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
     const shapes = await api('GET', `/ontologies/${supplyChain.id}/versions/${version.id}/export?format=shapes`)
     expect(shapes.body.includes('sh:pattern "^Zz"'), 'authored shape materialised in the version package')
     supplyChain.version = version
+  })
+
+  await step('Advanced semantics in the inspector: locked IRI, disjointness, a restriction; canvas badges', async () => {
+    await page.goto(`${BASE_URL}/projects/${project.id}/ontology?ontology=${supplyChain.id}&tab=designer`)
+    await page.locator('[data-testid="class-node-Supplier"]').click()
+    await page.getByTestId('iri-status').getByText('IRI locked (published in v1.0.0)').waitFor()
+    const section = page.getByTestId('class-semantics')
+    await section.getByRole('button', { name: /Advanced semantics/ }).click()
+    await section.locator('#cls-disjoint').selectOption({ label: 'Product' })
+    await section.getByRole('button', { name: 'Add restriction' }).click()
+    const restriction = section.getByTestId('restriction-editor')
+    await restriction.getByLabel('Restricted property').selectOption({ label: 'supplies' })
+    await restriction.getByLabel('Restriction kind').selectOption('some')
+    await restriction.getByText("Every Supplier has at least one 'supplies' that is a Product.").waitFor()
+    await shot('05a-advanced-semantics')
+    await page.getByRole('button', { name: 'Save draft' }).click()
+    await page.getByText('Unsaved changes').first().waitFor({ state: 'detached' })
+    const marks = page.locator('[data-testid="class-node-Supplier"] [data-testid="semantic-marks"]')
+    await marks.getByText('⊥').waitFor()
+    await marks.getByText('∃1').waitFor()
+    const turtle = (await api('GET', `/ontologies/${supplyChain.id}/rdf?format=turtle`)).body
+    expect(turtle.includes('owl:disjointWith') && turtle.includes('owl:someValuesFrom'), 'OWL export contains the new axioms')
+  })
+
+  await step('Validation tab reports SHACL and OWL reasoning as separate lanes', async () => {
+    await tab(/^Validation/).click()
+    await page.getByTestId('lane-shacl-status').getByText('Well-formed').waitFor()
+    await page.getByTestId('lane-reasoning-run').click()
+    await page.getByTestId('lane-reasoning-status').getByText('No inconsistency found').waitFor({ timeout: 60_000 })
+    await page.getByTestId('lane-evidence').waitFor()
+    await shot('05b-validation-lanes')
   })
 
   await step('Knowledge Graph Studio offers the validation policies', async () => {

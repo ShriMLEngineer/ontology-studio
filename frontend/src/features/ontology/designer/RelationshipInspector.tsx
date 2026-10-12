@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import type { DatatypePropertyDefinition, ObjectPropertyDefinition, ValidationIssue } from '@/lib/api/types'
 import { LOCAL_NAME_PATTERN } from '@/lib/naming'
 import { classLabel, findLocalNameOwner, iriHint, type DraftAction, type DraftDoc, type ElementSelection } from '../draft/model'
+import { IriStatus, ObjectPropertySemanticsEditor } from './AdvancedSemantics'
 import { AttributeEditor } from './ClassInspector'
 import { AliasEditor, ClassSelect, Field } from './fields'
 import { IssueList } from './IssueList'
@@ -100,6 +101,7 @@ export function RelationshipInspector({
             onChange={(e) => update({ local_name: e.target.value })}
           />
         </Field>
+        <IriStatus element={prop} />
         <Field id="rel-description" label="Definition">
           <Textarea
             id="rel-description"
@@ -111,6 +113,7 @@ export function RelationshipInspector({
         <Field id="rel-aliases" label="Aliases & synonyms">
           <AliasEditor id="rel-aliases" value={prop.aliases} onChange={(aliases) => update({ aliases })} />
         </Field>
+        <ObjectPropertySemanticsEditor doc={doc} prop={prop} dispatch={dispatch} />
       </DrawerSection>
     </RightDrawer>
   )

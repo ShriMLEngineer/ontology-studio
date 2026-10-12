@@ -16,6 +16,7 @@ import { dateTime, plural } from '@/lib/format'
 import { queryKeys } from '@/lib/query'
 import type { DraftEditor } from '../draft/useDraftEditor'
 import { SEVERITY_META } from '../designer/presentation'
+import { SemanticLanes } from './SemanticLanes'
 
 const KIND_LABEL: Record<ValidationIssue['element_kind'], string> = {
   ontology: 'Ontology',
@@ -212,6 +213,8 @@ export function ValidationView({
           )}
         </>
       )}
+
+      {editor.base && <SemanticLanes projectId={projectId} ontologyId={ontologyId} revision={editor.base.draft_revision} />}
     </div>
   )
 }

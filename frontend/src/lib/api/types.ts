@@ -215,6 +215,8 @@ export interface OntologyDraft {
   object_properties: ObjectPropertyDefinition[]
   datatype_properties: DatatypePropertyDefinition[]
   layout: DiagramLayout
+  /** Elements of the latest published version (their IRIs are locked). */
+  locked_iri_ids?: string[]
 }
 
 export interface DraftSaveRequest {

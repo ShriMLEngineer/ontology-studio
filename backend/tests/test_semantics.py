@@ -324,12 +324,15 @@ def test_deleting_elements_removes_semantic_references(client: TestClient) -> No
 def test_iris_are_minted_followed_and_locked_after_publication(seeded_client: TestClient) -> None:
     _, ontology = _seeded(seeded_client)
     oid = ontology["id"]
+    assert seeded_client.get(f"/api/ontologies/{oid}/draft").json()["locked_iri_ids"] == []
     assert _publish(seeded_client, oid).status_code == 201
+    assert {"cls-supplier", "op-supplies"} <= set(seeded_client.get(f"/api/ontologies/{oid}/draft").json()["locked_iri_ids"])
 
     renamed = seeded_client.patch(f"/api/ontologies/{oid}/classes/cls-supplier", json={"local_name": "Vendor"}).json()
     assert renamed["local_name"] == "Vendor" and renamed["iri"] == NS + "Supplier", "published IRIs are locked"
 
     created = seeded_client.post(f"/api/ontologies/{oid}/classes", json={"label": "Inventory Lot"}).json()
+    assert created["id"] not in seeded_client.get(f"/api/ontologies/{oid}/draft").json()["locked_iri_ids"]
     assert created["iri"] == NS + "InventoryLot"
     moved = seeded_client.patch(f"/api/ontologies/{oid}/classes/{created['id']}", json={"local_name": "Lot"}).json()
     assert moved["iri"] == NS + "Lot", "unpublished IRIs follow the local name"

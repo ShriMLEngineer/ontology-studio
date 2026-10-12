@@ -108,6 +108,8 @@ class OntologyDraft(BaseModel):
     object_properties: list[ObjectPropertyDefinition]
     datatype_properties: list[DatatypePropertyDefinition]
     layout: DiagramLayout
+    # Elements of the latest published version: their IRIs can no longer change (read-only, Phase 4).
+    locked_iri_ids: list[str] = Field(default_factory=list)
 
 
 class DraftSaveRequest(_Strict):

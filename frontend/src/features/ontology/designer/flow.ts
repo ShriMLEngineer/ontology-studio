@@ -146,7 +146,8 @@ export function buildEdges(
         source: prop.domain_id,
         target: prop.range_id,
         kind: 'relation',
-        label: prop.label,
+        // ⇄ marks an owl:inverseOf declaration (details in the relationship inspector).
+        label: prop.semantics?.inverse_id ? `${prop.label} ⇄` : prop.label,
         select: { kind: 'object_property', id: prop.id },
       })
     }

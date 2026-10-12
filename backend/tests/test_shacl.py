@@ -197,6 +197,38 @@ def test_imported_shacl_is_meta_validated_and_preserved(seeded_client: TestClien
     assert rejected.status_code == 422 and error_code(rejected) == "SHAPES_INVALID"
 
 
+def test_malformed_shapes_block_publication(seeded_client: TestClient) -> None:
+    """Defence in depth: whatever enters the draft, a package never ships shapes that fail SHACL-SHACL."""
+    from app.modules.ontology.models import OntologyExtensionAxiomRecord
+
+    _, ontology = _seeded(seeded_client)
+    bad = "https://example.org/shapes#Bad"
+    ntriples = "\n".join([
+        f"<{bad}> <{RDF.type}> <{SH.NodeShape}> .",
+        f"<{bad}> <{SH.targetClass}> <{NS}Supplier> .",
+        f"<{bad}> <{SH.property}> <{bad}-p> .",
+        f"<{bad}-p> <{SH.path}> <{NS}legalName> .",
+        f'<{bad}-p> <{SH.minLength}> "two" .',
+    ])
+    with seeded_client.app.state.session_factory() as session:  # type: ignore[attr-defined]
+        record = OntologyExtensionAxiomRecord(
+            ontology_id=ontology["id"], scope="shapes", kind="sh:NodeShape", summary="Malformed shape", ntriples=ntriples,
+            anchor_ids=["cls-supplier"],
+        )
+        session.add(record)
+        session.commit()
+        axiom_id = record.id
+    preview = seeded_client.get(f"/api/ontologies/{ontology['id']}/publish-preview").json()
+    assert preview["can_publish"] is False
+    assert any("SHACL shapes are not well-formed" in b for b in preview["blockers"])
+    refused = _publish(seeded_client, ontology["id"])
+    assert refused.status_code == 422 and error_code(refused) == "PUBLISH_BLOCKED_BY_SHAPES"
+    removed = seeded_client.delete(f"/api/ontologies/{ontology['id']}/axioms/{axiom_id}", params={"deleted_by": SME})
+    assert removed.status_code == 204, removed.text
+    assert seeded_client.get(f"/api/ontologies/{ontology['id']}/publish-preview").json()["can_publish"] is True
+    assert _publish(seeded_client, ontology["id"]).status_code == 201
+
+
 # ------------------------------------------------------------------------------ knowledge-graph lanes
 
 
