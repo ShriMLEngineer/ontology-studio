@@ -8,7 +8,6 @@ progress. The workflow never raises: failures are recorded on the stage and the 
 accepted facts reach the graph store, and only under this build's graph scope.
 """
 
-import hashlib
 import logging
 import time
 from collections.abc import Callable
@@ -20,13 +19,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
+from app.core.errors import DomainError
 from app.core.ids import utcnow
 from app.modules.activity.service import record_activity
 from app.modules.discovery.alignment import normalize_term
 from app.modules.discovery.grounding import ChunkRef
-from app.modules.graph.store import GraphEdge, GraphStore, GraphVertex
+from app.modules.graph.projection import PropertyGraphProjection, project_property_graph
+from app.modules.graph.store import GraphStore
 from app.modules.kg.canonical import LLM, STRUCTURED, ExtractionResult, FactCandidate, GapCandidate
 from app.modules.kg.connectors import StructuredSource, TextSource, is_structured, open_structured, open_text
+from app.modules.kg.deployments import LOCAL_SQL_SPEC, deploy, spec_from_snapshot
 from app.modules.kg.evaluation import compute_evaluation
 from app.modules.kg.extraction import (
     PROMPT_VERSION,
@@ -241,10 +243,6 @@ def execute_kg_build(
     except Exception as error:  # noqa: BLE001 - surfaced to the user via the build record
         logger.exception("KG build %s failed", build_id)
         tracker.fail(f"Unexpected error: {error}")
-
-
-def _edge_id(out_id: str, predicate_id: str, in_id: str) -> str:
-    return "e" + hashlib.sha1(f"{out_id}|{predicate_id}|{in_id}".encode()).hexdigest()[:24]
 
 
 class _Run:
@@ -858,6 +856,8 @@ class _Run:
     def stage_graph_persistence(self) -> None:
         key = "graph_persistence"
         self.tracker.start(key)
+        snapshot = self.view.snapshot
+        data_namespace = self.config.get("data_namespace") or f"{ontology_iri_of(snapshot.with_iris())}/data/"
         with self.session_factory() as session:
             store = self.graph_store_factory(session)
             facts = list(
@@ -870,72 +870,112 @@ class _Run:
             entities = {
                 e.id: e for e in session.scalars(select(KgEntity).where(KgEntity.build_id == self.build_id))
             }
-            vertices: dict[str, GraphVertex] = {}
-            for fact in (f for f in facts if f.kind == "type"):
-                entity = entities[fact.subject_entity_id or ""]
-                cls = self.view.classes[entity.class_id or ""]
-                vertices[entity.id] = GraphVertex(
-                    id=entity.vertex_id,
-                    label=cls.local_name,
-                    name=entity.label,
-                    class_id=cls.id,
-                    properties={"identifier": entity.identifier, "aliases": list(entity.aliases)},
-                    fact_ids=[fact.id],
-                    source_ids=list(fact.document_ids),
-                )
-                fact.graph_element_id = entity.vertex_id
-            for fact in (f for f in facts if f.kind == "attribute"):
-                vertex = vertices.get(fact.subject_entity_id or "")
-                prop = self.view.datatype_properties.get(fact.predicate_id or "")
-                if vertex is None or prop is None:
-                    continue
-                values = vertex.properties.setdefault(prop.local_name, [])
-                if fact.value not in values:
-                    values.append(fact.value)
-                vertex.fact_ids.append(fact.id)
-                vertex.source_ids = list(dict.fromkeys([*vertex.source_ids, *fact.document_ids]))
-                fact.graph_element_id = vertex.id
-            edges: dict[str, GraphEdge] = {}
-            skipped = 0
-            for fact in (f for f in facts if f.kind == "relationship"):
-                subject = vertices.get(fact.subject_entity_id or "")
-                obj = vertices.get(fact.object_entity_id or "")
-                prop = self.view.object_properties.get(fact.predicate_id or "")
-                if subject is None or obj is None or prop is None:
-                    skipped += 1
-                    continue
-                edge_id = _edge_id(subject.id, prop.id, obj.id)
-                edge = edges.get(edge_id)
-                if edge is None:
-                    edge = edges[edge_id] = GraphEdge(
-                        id=edge_id,
-                        label=prop.local_name,
-                        predicate_id=prop.id,
-                        out_id=subject.id,
-                        in_id=obj.id,
-                        properties={"predicate_label": prop.label},
-                    )
-                edge.fact_ids.append(fact.id)
-                edge.source_ids = list(dict.fromkeys([*edge.source_ids, *fact.document_ids]))
-                fact.graph_element_id = edge_id
-            store.upsert_vertices(self.build_id, list(vertices.values()))
-            store.upsert_edges(self.build_id, list(edges.values()))
+            projection = project_property_graph(self.view, facts, entities)
+            for fact in facts:
+                element = projection.element_of_fact.get(fact.id)
+                if element is not None:
+                    fact.graph_element_id = element
             build = session.get(KgBuild, self.build_id)
             assert build is not None
+            canonical = deploy(
+                session,
+                build=build,
+                spec=LOCAL_SQL_SPEC,
+                snapshot=snapshot,
+                projection=projection,
+                data_namespace=data_namespace,
+                oxigraph_dir=self.settings.oxigraph_dir,
+                sql_store=store,
+                origin="build",
+                requested_by=build.requested_by,
+            )
+            if canonical.status != "completed":
+                raise StageFailure(f"The canonical graph store write failed: {canonical.error}")
             build.graph_store = store.name
             session.commit()
             node_count, edge_count = store.counts(self.build_id)
-        if skipped:
-            self.tracker.log(key, f"{skipped} accepted relationship(s) skipped: an endpoint is not a graph node.", level="warning")
-        duplicate_facts = sum(len(e.fact_ids) - 1 for e in edges.values())
-        self.stats["graph"] = {"nodes": node_count, "edges": edge_count, "store": store.name, "graph_id": self.build_id}
+        if projection.skipped_relationships:
+            self.tracker.log(
+                key,
+                f"{projection.skipped_relationships} accepted relationship(s) skipped: an endpoint is not a graph node.",
+                level="warning",
+            )
+        duplicate_facts = projection.merged_duplicate_facts
+        deployments = [{"id": canonical.id, "target": LOCAL_SQL_SPEC.name, "kind": "local-sql", "status": "completed"}]
+        target = self.config.get("graph_target") or {}
+        note = ""
+        if target.get("kind") and target["kind"] != "local-sql":
+            outcome = self._deploy_to_target(key, target, snapshot, projection, data_namespace)
+            deployments.append(outcome)
+            note = (
+                f" Deployed to {outcome['target']}: {outcome.get('triples', 0)} triple(s), verified."
+                if outcome["status"] == "completed"
+                else f" Deployment to {outcome['target']} {outcome['status']}: {outcome.get('error') or outcome.get('reason')}"
+            )
+        self.stats["graph"] = {
+            "nodes": node_count,
+            "edges": edge_count,
+            "store": store.name,
+            "graph_id": self.build_id,
+            "deployments": deployments,
+        }
         self.tracker.merge_stats(graph=self.stats["graph"])
         self.tracker.complete(
             key,
             f"{node_count} node(s) and {edge_count} edge(s) written to the {store.name} graph store under this build's "
-            f"graph scope ({duplicate_facts} duplicate relationship fact(s) merged into existing edges).",
+            f"graph scope ({duplicate_facts} duplicate relationship fact(s) merged into existing edges).{note}",
             {"nodes": node_count, "edges": edge_count, "merged_duplicate_facts": duplicate_facts},
         )
+
+    def _deploy_to_target(
+        self,
+        key: str,
+        target: dict[str, Any],
+        snapshot: OntologySnapshot,
+        projection: PropertyGraphProjection,
+        data_namespace: str,
+    ) -> dict[str, Any]:
+        """Deploy to the build's selected target. A failing target never fails the build: the
+        canonical graph is complete, and the outcome is recorded and can be retried."""
+        name = target.get("name") or target.get("id", "")
+        with self.session_factory() as session:
+            build = session.get(KgBuild, self.build_id)
+            assert build is not None
+            try:
+                row = deploy(
+                    session,
+                    build=build,
+                    spec=spec_from_snapshot(target),
+                    snapshot=snapshot,
+                    projection=projection,
+                    data_namespace=data_namespace,
+                    oxigraph_dir=self.settings.oxigraph_dir,
+                    sql_store=self.graph_store_factory(session),
+                    origin="build",
+                    requested_by=build.requested_by,
+                )
+            except DomainError as error:
+                session.rollback()
+                self.tracker.log(key, f"Not deployed to {name}: {error.message}", level="warning")
+                return {"target": name, "kind": target.get("kind"), "status": "skipped", "reason": error.message}
+            session.commit()
+            outcome = {
+                "id": row.id,
+                "target": row.target_name,
+                "kind": row.target_kind,
+                "status": row.status,
+                "triples": (row.stats or {}).get("triples"),
+                "error": row.error,
+            }
+        if outcome["status"] == "completed":
+            self.tracker.log(
+                key,
+                f"Deployed to {name} ({target.get('kind')}): {outcome['triples']} triple(s) in "
+                f"{len(row.graphs or {})} named graph(s), verified by reading the counts back.",
+            )
+        else:
+            self.tracker.log(key, f"Deployment to {name} failed: {outcome['error']}", level="warning")
+        return outcome
 
     # ------------------------------------------------------------------ 10. evaluation
 

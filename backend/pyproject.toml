@@ -23,6 +23,8 @@ dependencies = [
 dev = [
     "pytest>=9.1",
     "ruff>=0.14",
+    # Oxigraph's standalone SPARQL 1.1 server: a real external RDF database for adapter integration tests.
+    "oxigraph>=0.5,<0.6",
 ]
 
 [build-system]

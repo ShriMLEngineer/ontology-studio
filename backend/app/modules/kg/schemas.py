@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.modules.governance.schemas import ProposalSummary
+from app.modules.graph.compatibility import CompatibilityReport
 from app.modules.kg.mapping import MappingSpec
 from app.modules.kg.policy import DEFAULT_POLICY_ID, POLICIES
 
@@ -419,6 +420,9 @@ class GraphRead(BaseModel):
     classes: list[FacetCount]
     predicates: list[FacetCount]
     sources: list[FacetCount]
+    # Set when the graph was read back from a deployment target instead of the canonical store.
+    deployment_id: str | None = None
+    read_warnings: list[str] = Field(default_factory=list)
 
 
 class GraphElementDetail(BaseModel):
@@ -435,6 +439,7 @@ class GraphElementDetail(BaseModel):
     ontology_version: str
     ontology_version_id: str
     project_id: str
+    deployment_id: str | None = None
 
 
 # ---------------------------------------------------------------------------------- evaluation & feedback
@@ -535,3 +540,91 @@ class BuildComparison(BaseModel):
     nodes: ElementDiff
     edges: ElementDiff
     metrics: list[MetricComparison]
+
+
+# ---------------------------------------------------------------------------------- graph deployments (Phase 4.4)
+
+
+class CapabilityProfileRead(BaseModel):
+    id: str
+    version: int
+    target_kind: str
+    label: str
+    data_model: str
+    query_languages: list[str]
+    multi_typing: str
+    named_graphs: bool
+    language_tags: bool
+    typed_literals: bool
+    multi_valued_properties: bool
+    statement_metadata: str
+    stores_ontology: bool
+    reasoning: str
+    native_shacl: bool
+    verified: bool
+    notes: list[str]
+    adapter_available: bool
+
+
+class MappingProfileRead(BaseModel):
+    id: str
+    data_model: str
+    label: str
+    description: str
+    include_ontology: bool
+    include_provenance: bool
+
+
+class GraphCapabilitiesRead(BaseModel):
+    profiles: list[CapabilityProfileRead]
+    mapping_profiles: list[MappingProfileRead]
+
+
+class CompatibilityRead(BaseModel):
+    build_id: str
+    target_id: str | None
+    target_name: str
+    target_kind: str
+    adapter_available: bool
+    report: CompatibilityReport
+
+
+class DeploymentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+    mapping_profile: str | None = None
+    acknowledge_semantic_loss: bool = False
+    requested_by: Actor
+
+
+class DeploymentRead(BaseModel):
+    id: str
+    build_id: str
+    build_number: int
+    project_id: str
+    target_id: str
+    target_name: str
+    target_kind: str
+    data_model: str
+    mapping_profile: str
+    capability_profile: str
+    data_namespace: str | None
+    graphs: dict[str, str]
+    compatibility: CompatibilityReport | None
+    acknowledged_loss_by: str | None
+    status: Literal["running", "completed", "failed", "superseded"]
+    stats: dict[str, Any]
+    error: str | None
+    origin: Literal["build", "manual", "legacy"]
+    requested_by: str
+    created_at: datetime
+    completed_at: datetime | None
+    explorable: bool
+    queryable: bool
+
+
+class SparqlQueryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: Annotated[str, StringConstraints(min_length=1, max_length=20000)]

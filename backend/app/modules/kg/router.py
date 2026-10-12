@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import NotFoundError
 from app.db.session import get_session
+from app.modules.graph.sparql import SparqlResult
+from app.modules.kg.deployments import KgDeploymentService
 from app.modules.kg.feedback import KgFeedbackService
 from app.modules.kg.models import KgBuild
 from app.modules.kg.orchestrator import execute_kg_build
 from app.modules.kg.policy import DEFAULT_POLICY_ID, POLICIES
-from app.modules.kg.queries import KgQueryService
+from app.modules.kg.queries import GraphSource, KgQueryService
 from app.modules.kg.schemas import (
     BuildSettings,
     ValidationPolicyRead,
@@ -20,6 +22,9 @@ from app.modules.kg.schemas import (
     BuildStart,
     BuildSummary,
     BuildUpdate,
+    CompatibilityRead,
+    DeploymentCreate,
+    DeploymentRead,
     EntityDetail,
     EntitySummary,
     EvaluationRead,
@@ -28,6 +33,7 @@ from app.modules.kg.schemas import (
     GapProposalRequest,
     GapProposalResult,
     GapRead,
+    GraphCapabilitiesRead,
     GraphElementDetail,
     GraphNodeRead,
     GraphRead,
@@ -40,6 +46,7 @@ from app.modules.kg.schemas import (
     PublishedVersionOption,
     RebuildRequest,
     SourcePreview,
+    SparqlQueryRequest,
 )
 from app.modules.kg.service import KgService
 from app.modules.llm.provider import LLMProvider
@@ -87,7 +94,14 @@ class BuildResources:
         graph = self.settings.get_graph(graph_id)
         return {
             "llm_config_id": llm_id,
-            "graph_target": {"id": graph.id, "name": graph.name, "kind": graph.kind, "model": graph.model, "config": graph.config},
+            "graph_target": {
+                "id": graph.id,
+                "name": graph.name,
+                "kind": graph.kind,
+                "model": graph.model,
+                "config": graph.config,
+                "secret_env": graph.secret_env,
+            },
         }
 
 
@@ -98,6 +112,26 @@ def get_build_resources(
 
 
 Resources = Annotated[BuildResources, Depends(get_build_resources)]
+
+
+def get_deployment_service(request: Request, session: Annotated[Session, Depends(get_session)]) -> KgDeploymentService:
+    return KgDeploymentService(
+        session,
+        request.app.state.settings,
+        get_settings_service(request, session),
+        request.app.state.graph_store_factory(session),
+    )
+
+
+Deployments = Annotated[KgDeploymentService, Depends(get_deployment_service)]
+
+
+def _source(deployments: KgDeploymentService, build_id: str, deployment_id: str | None) -> GraphSource | None:
+    if not deployment_id:
+        return None
+    store, warnings = deployments.reader(build_id, deployment_id)
+    row = deployments.get(deployment_id)
+    return GraphSource(store=store, deployment_id=deployment_id, label=row.target_kind, warnings=warnings)
 
 
 def _schedule(request: Request, background: BackgroundTasks, provider: LLMProvider | None, build_id: str) -> None:
@@ -298,32 +332,98 @@ def get_entity(entity_id: str, queries: Queries) -> EntityDetail:
 def build_graph(
     build_id: str,
     queries: Queries,
+    deployments: Deployments,
     class_id: Annotated[list[str] | None, Query()] = None,
     predicate_id: Annotated[list[str] | None, Query()] = None,
     source_id: Annotated[list[str] | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=5000)] = 500,
+    deployment_id: str | None = None,
 ) -> GraphRead:
-    return queries.graph(build_id, class_ids=class_id, predicate_ids=predicate_id, source_ids=source_id, limit=limit)
+    """The build's graph; with ``deployment_id`` it is read back from that deployment's target."""
+    return queries.graph(
+        build_id,
+        class_ids=class_id,
+        predicate_ids=predicate_id,
+        source_ids=source_id,
+        limit=limit,
+        via=_source(deployments, build_id, deployment_id),
+    )
 
 
 @router.get("/kg/builds/{build_id}/graph/search", response_model=list[GraphNodeRead])
 def search_graph(
-    build_id: str, q: str, queries: Queries, class_id: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 20
+    build_id: str,
+    q: str,
+    queries: Queries,
+    deployments: Deployments,
+    class_id: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    deployment_id: str | None = None,
 ) -> list[GraphNodeRead]:
-    return queries.search(build_id, q, class_id, limit)
+    return queries.search(build_id, q, class_id, limit, via=_source(deployments, build_id, deployment_id))
 
 
 @router.get("/kg/builds/{build_id}/graph/nodes/{vertex_id}/neighborhood", response_model=GraphRead)
 def neighborhood(
-    build_id: str, vertex_id: str, queries: Queries, depth: Annotated[int, Query(ge=1, le=3)] = 1
+    build_id: str,
+    vertex_id: str,
+    queries: Queries,
+    deployments: Deployments,
+    depth: Annotated[int, Query(ge=1, le=3)] = 1,
+    deployment_id: str | None = None,
 ) -> GraphRead:
-    return queries.neighborhood(build_id, vertex_id, depth)
+    return queries.neighborhood(build_id, vertex_id, depth, via=_source(deployments, build_id, deployment_id))
 
 
 @router.get("/kg/builds/{build_id}/graph/elements/{element_id}", response_model=GraphElementDetail)
-def graph_element(build_id: str, element_id: str, queries: Queries) -> GraphElementDetail:
+def graph_element(
+    build_id: str, element_id: str, queries: Queries, deployments: Deployments, deployment_id: str | None = None
+) -> GraphElementDetail:
     """A node or relationship with its source provenance, evidence and validation outcome."""
-    return queries.element(build_id, element_id)
+    return queries.element(build_id, element_id, via=_source(deployments, build_id, deployment_id))
+
+
+# ---------------------------------------------------------------------- graph deployments (Phase 4.4)
+
+
+@router.get("/kg/graph-capabilities", response_model=GraphCapabilitiesRead)
+def graph_capabilities(deployments: Deployments) -> GraphCapabilitiesRead:
+    """Versioned capability profiles of graph targets and the available mapping profiles."""
+    return deployments.capabilities()
+
+
+@router.get("/kg/builds/{build_id}/compatibility", response_model=CompatibilityRead)
+def compatibility(
+    build_id: str,
+    deployments: Deployments,
+    target_id: str | None = None,
+    kind: str | None = None,
+    mapping_profile: str | None = None,
+) -> CompatibilityRead:
+    """What a target (registered connection or bare kind) preserves of this build and its ontology version."""
+    return deployments.compatibility(build_id, target_id=target_id, kind=kind, mapping_profile=mapping_profile)
+
+
+@router.get("/kg/builds/{build_id}/deployments", response_model=list[DeploymentRead])
+def list_deployments(build_id: str, deployments: Deployments) -> list[DeploymentRead]:
+    return deployments.list_for_build(build_id)
+
+
+@router.post("/kg/builds/{build_id}/deployments", response_model=DeploymentRead, status_code=status.HTTP_201_CREATED)
+def create_deployment(build_id: str, data: DeploymentCreate, deployments: Deployments) -> DeploymentRead:
+    """Deploy a completed build to a graph target and verify it. A failing target is recorded as a failed deployment."""
+    return deployments.create(build_id, data)
+
+
+@router.get("/kg/deployments/{deployment_id}", response_model=DeploymentRead)
+def get_deployment(deployment_id: str, deployments: Deployments) -> DeploymentRead:
+    return deployments.get(deployment_id)
+
+
+@router.post("/kg/deployments/{deployment_id}/query", response_model=SparqlResult)
+def query_deployment(deployment_id: str, data: SparqlQueryRequest, deployments: Deployments) -> SparqlResult:
+    """Read-only SPARQL (SELECT, ASK, CONSTRUCT, DESCRIBE) over the deployment's graphs; updates and SERVICE are rejected."""
+    return deployments.query(deployment_id, data)
 
 
 # ---------------------------------------------------------------------- evaluation & feedback

@@ -321,6 +321,61 @@ data: 51 accepted, 4 rejected, 2 quarantined); SHACL adds warnings for missing r
   (registrable). Neo4j and Azure Cosmos DB (Gremlin) are listed as *not available* with the reason
   (no reachable server to implement and verify an adapter against); they cannot be registered.
 
+### 4.6e Multi-graph projections and deployments (Phase 4.4/4.5)
+
+```mermaid
+flowchart LR
+  facts[(Accepted facts<br/>+ entities)] --> pg[project_property_graph]
+  pg --> sql[(Local SQL property graph<br/>canonical, graph_id = build)]
+  pg --> rdf[project_rdf<br/>data / provenance / ontology graphs]
+  rdf --> ox[(Embedded Oxigraph)]
+  rdf --> sp[(SPARQL 1.1 endpoint<br/>CLEAR + INSERT DATA)]
+  ox & sp --> rb[RDF reader<br/>→ GraphVertex/GraphEdge] --> ex[Graph Explorer]
+  ox & sp --> q[Read-only SPARQL console]
+  cap[Capability profile] & mp[Mapping profile] --> cr[Compatibility report] --> dep[(kg_graph_deployments)]
+```
+
+* **Projections** (`graph/projection.py`) are pure functions of (accepted facts, published
+  version, data namespace). `project_property_graph` is the Phase 3 graph-persistence logic, moved
+  unchanged. `project_rdf` produces three named graphs per build:
+  `{data_namespace}build/{build_id}` (`rdf:type` with the class IRI, `rdfs:label`,
+  `dcterms:identifier`, `skos:altLabel`, typed literals, relationships with the property IRI),
+  `.../provenance` (`ols:fact`/`ols:source` per element; one `ols:Relationship` resource
+  `{data_namespace}r/{edge_id}` per edge - works on any SPARQL 1.1 store, no RDF-star) and
+  `.../ontology` (the published OWL).
+* **Capability profiles** (`graph/capabilities.py`, versioned, e.g. `oxigraph/1`) state what a
+  target represents natively. Profiles of targets with an adapter are *verified* by the adapter
+  and its integration tests; Neo4j and Cosmos DB profiles are documented assumptions used only for
+  compatibility previews. **Mapping profiles** (`rdf-default/1`, `rdf-data-only/1`,
+  `lpg-default/1`) are immutable and code-defined.
+* **Compatibility report** (`graph/compatibility.py`): one row per feature (class membership,
+  identity, typed values, lexical forms, multi-valued attributes, provenance, build isolation,
+  hierarchy, restrictions, disjointness/equivalence, property characteristics, language-tagged
+  annotations, preserved axioms, SHACL shapes) with outcome *native / transformed / partial /
+  not stored / semantic loss* and the number of affected elements. A report with semantic loss
+  must be acknowledged; the acknowledging user is recorded on the deployment.
+* **Adapters** (`graph/targets/adapters.py`). *Local SQL*: idempotent upserts. *Embedded
+  Oxigraph*: `remove_graph` + N-Triples load per named graph. *SPARQL HTTP*: `CLEAR SILENT GRAPH`
+  and `INSERT DATA` in chunks of 2,000 triples over the update endpoint (graphs with blank nodes
+  are sent in one request). Every deployment is **verified** by counting the triples (or
+  vertices/edges) the target holds afterwards; a mismatch fails the deployment.
+* **Builds** always write the canonical local SQL graph and record it as a deployment; when the
+  build's graph target is another store the build also deploys there. A failing target is recorded
+  (status `failed`, error, build log warning) and never fails the build. Completed builds can be
+  deployed again from the *Deployments* tab; a successful re-deployment replaces the build's graphs
+  and supersedes the earlier record.
+* **Reading back** (`graph/rdf_reader.py`, `graph/memory_store.py`): the explorer accepts
+  `deployment_id`; the build's data and provenance graphs are fetched from the target (CONSTRUCT
+  or dump), rebuilt into `GraphVertex`/`GraphEdge` with identical ids and served with the exact
+  read semantics of `SqlGraphStore` (cached for 15 s). Fact details always come from the build's
+  fact store. Triples that cannot be attributed are counted as read warnings, never invented.
+* **Query console** (`graph/sparql.py`): queries are parsed by rdflib first - only SELECT, ASK,
+  CONSTRUCT and DESCRIBE are accepted (every update form fails the query grammar) and `SERVICE` is
+  refused. The default graph is the build's data graph; its provenance and ontology graphs are the
+  named graphs. Results are capped at 1,000 rows (lazily on Oxigraph).
+* **Migration 0007** adds `kg_graph_deployments` and records, for every build completed before the
+  upgrade, a factual `legacy` deployment of its local SQL graph (counts read from the graph tables).
+
 ### 4.7 Knowledge-graph engineering (Phase 3)
 
 ```mermaid
@@ -363,7 +418,7 @@ build linked to its parent.
 | 5 Entity resolution | `resolve_entities`; resolved entities and mentions persisted. |
 | 6 Structural validation | `assess_*_structure` for every entity type fact, relationship and attribute. |
 | 7 Evidence validation | `assess_*_evidence`; status derived; single-value conflicts quarantined; facts persisted. |
-| 8 Graph persistence | Accepted facts → `GraphVertex`/`GraphEdge` upserts under the build's graph scope. |
+| 8 Graph persistence | Accepted facts → `GraphVertex`/`GraphEdge` upserts under the build's graph scope (since Phase 4.4: through `project_property_graph`, recorded as the canonical deployment, then deployed to the build's selected graph target - see 4.6e). |
 | 9 Evaluation | Gaps persisted; metrics computed and stored on the build. |
 
 **Source connectors** (`kg/connectors.py`). The pipeline depends on two protocols:
@@ -453,7 +508,8 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 | KG configuration | `GET /projects/{id}/kg/ontology-versions` (published only), `GET/POST /projects/{id}/kg/mappings`, `POST /projects/{id}/kg/mappings/validate`, `GET /sources/{id}/mapping-suggestion?ontology_version_id=`, `GET/PUT/DELETE /kg/mappings/{id}` |
 | KG builds | `GET/POST /projects/{id}/kg/builds`, `GET/PATCH/DELETE /kg/builds/{id}`, `POST /kg/builds/{id}/start`, `POST /kg/builds/{id}/rebuild`, `GET /kg/builds/{id}/logs?after=`, `GET /kg/compare?base=&target=` |
 | Facts & entities | `GET /kg/builds/{id}/facts?status=&kind=&source_id=&predicate_id=&q=`, `GET /kg/facts/{id}`, `GET /kg/builds/{id}/entities?q=&method=`, `GET /kg/entities/{id}` |
-| Graph | `GET /kg/builds/{id}/graph?class_id=&predicate_id=&source_id=`, `GET /kg/builds/{id}/graph/search?q=`, `GET /kg/builds/{id}/graph/nodes/{vid}/neighborhood`, `GET /kg/builds/{id}/graph/elements/{eid}` (with provenance) |
+| Graph | `GET /kg/builds/{id}/graph?class_id=&predicate_id=&source_id=&deployment_id=`, `GET /kg/builds/{id}/graph/search?q=&deployment_id=`, `GET /kg/builds/{id}/graph/nodes/{vid}/neighborhood?deployment_id=`, `GET /kg/builds/{id}/graph/elements/{eid}?deployment_id=` (with provenance) |
+| Graph deployments (Phase 4) | `GET /kg/graph-capabilities`, `GET /kg/builds/{id}/compatibility?target_id=\|kind=&mapping_profile=`, `GET/POST /kg/builds/{id}/deployments`, `GET /kg/deployments/{id}`, `POST /kg/deployments/{id}/query` (read-only SPARQL) |
 | Evaluation & feedback | `GET /kg/builds/{id}/evaluation`, `GET /kg/builds/{id}/gaps`, `POST /kg/builds/{id}/gaps/proposals` |
 
 ### 4.9 Runtime
@@ -500,9 +556,10 @@ All Phase 3 functionality lives in **Knowledge Graph Studio** (build selector in
 | Tab | Capabilities |
 |---|---|
 | Pipeline | Configuration panel (published version with its classes/relationships, source selection and upload, preview, per-source mapping editor with preview, suggestion and live validation, validation policy, extraction settings, configured LLM, readiness messages, save/start), execution status (nine stages with status, timing and summaries, real counts, errors, polled log), rebuild with another published version, build history and build comparison. |
-| Graph Explorer | Cytoscape.js canvas of the persisted graph (class colours, directed labelled edges, pan/zoom, layout, fit), entity search, class / relationship / source filters, table fallback, and a right-hand drawer for nodes (class, identifier, attributes, relationships) and relationships (subject → predicate → object) with traceability (build, ontology version) and every supporting fact's validation checks and source evidence (original record or page text with the quote highlighted). |
+| Graph Explorer | Cytoscape.js canvas of the persisted graph (class colours, directed labelled edges, pan/zoom, layout, fit), entity search, class / relationship / source filters, table fallback, and a right-hand drawer for nodes (class, identifier, attributes, relationships) and relationships (subject → predicate → object) with traceability (build, ontology version) and every supporting fact's validation checks and source evidence (original record or page text with the quote highlighted). *Read from* (Phase 4.4) switches between the canonical graph and any verified deployment, read back from its graph database (`?deployment=`). |
 | Fact Validation | All candidate facts with status filters (accepted / rejected / quarantined), kind, source and text filters, evidence status, SHACL status and first reason; drawer with ontology property, structural checks, the SHACL lane (results with severity, policy outcome and shape), checks relaxed by the policy, the entailment lane, evidence / resolution checks and source excerpts. Builds evaluated before Phase 4 show "not run". |
 | Evaluation & Feedback | Metric cards with definitions and numerator/denominator, failure-reason breakdown, ontology gaps with evidence and proposal status, "Create change proposals" into SME Review. |
+| Deployments (Phase 4.4) | Deploy a completed build to a registered graph target with a mapping profile; live compatibility report (outcome per feature, affected counts, profile verification); explicit semantic-loss acknowledgement; compatibility preview for kinds without adapter; deployment history with expected and verified counts, errors and supersession; read-only SPARQL console with examples (SELECT/ASK/CONSTRUCT/DESCRIBE). |
 
 ## 6. Extension points
 
@@ -512,4 +569,5 @@ All Phase 3 functionality lives in **Knowledge Graph Studio** (build selector in
 | `DocumentParser` | `PlainTextParser`, `PdfParser` | Add OCR/Office parsers without touching callers. |
 | `OntologyArtifactRepository` | `FilesystemArtifactRepository` | Blob storage (e.g. Azure Blob with immutability policies) later. |
 | `StructuredSource` / `TextSource` | `CsvDocumentSource`, `DocumentTextSource` | A Snowflake connector implements `StructuredSource` (columns + streamed records). |
-| `GraphStore` | `SqlGraphStore` | Azure Cosmos DB Gremlin adapter: vertex/edge labels and properties map 1:1, `graph_id` becomes the partition key, upserts use `fold().coalesce(unfold(), addV())`. Not implemented or claimed yet. |
+| `GraphStore` | `SqlGraphStore` (canonical), `MemoryGraphStore` (read model over a deployment read back from RDF) | Azure Cosmos DB Gremlin adapter: vertex/edge labels and properties map 1:1, `graph_id` becomes the partition key, upserts use `fold().coalesce(unfold(), addV())`. Not implemented or claimed yet. |
+| Deployment adapters (Phase 4.4) | `LocalSqlAdapter`, `OxigraphAdapter`, `SparqlHttpAdapter` | A new target kind adds a capability profile, a catalogue entry (`graph/targets`) and an adapter with deploy + verify + read-back; Neo4j and Cosmos DB need a reachable server to be built and verified against. |

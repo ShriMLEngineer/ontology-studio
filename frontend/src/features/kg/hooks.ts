@@ -63,3 +63,15 @@ export function useValidationPolicies() {
   return useQuery({ queryKey: queryKeys.validationPolicies, queryFn: kgApi.policies, staleTime: Infinity })
 }
 
+export function useDeployments(buildId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.kgDeployments(buildId ?? ''),
+    queryFn: () => kgApi.deployments(buildId!),
+    enabled: Boolean(buildId),
+  })
+}
+
+export function useGraphCapabilities() {
+  return useQuery({ queryKey: queryKeys.graphCapabilities, queryFn: kgApi.capabilities, staleTime: Infinity })
+}
+

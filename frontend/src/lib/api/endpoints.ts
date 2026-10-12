@@ -8,7 +8,10 @@ import type {
   BuildDetail,
   BuildLog,
   BuildSummary,
+  CompatibilityRead,
   Decision,
+  Deployment,
+  DeploymentCreate,
   DiscoveryRun,
   DiscoveryRunCreate,
   DraftSaveRequest,
@@ -23,6 +26,7 @@ import type {
   FactDetail,
   FactPage,
   GapProposalResult,
+  GraphCapabilities,
   GraphData,
   GraphElementDetail,
   GraphNode,
@@ -59,6 +63,7 @@ import type {
   SourceDocument,
   SourceMapping,
   SourcePreview,
+  SparqlResult,
   ValidationPolicy,
   ValidationReport,
   VersionBump,
@@ -228,11 +233,24 @@ export const kgApi = {
   fact: (factId: string) => http.get<FactDetail>(`/kg/facts/${enc(factId)}`),
   entity: (entityId: string) => http.get<EntityDetail>(`/kg/entities/${enc(entityId)}`),
 
-  graph: (buildId: string, params: { class_id?: string[]; predicate_id?: string[]; source_id?: string[] } = {}) =>
-    http.get<GraphData>(`/kg/builds/${enc(buildId)}/graph${query(params)}`),
-  search: (buildId: string, q: string) => http.get<GraphNode[]>(`/kg/builds/${enc(buildId)}/graph/search${query({ q })}`),
-  element: (buildId: string, elementId: string) =>
-    http.get<GraphElementDetail>(`/kg/builds/${enc(buildId)}/graph/elements/${enc(elementId)}`),
+  graph: (
+    buildId: string,
+    params: { class_id?: string[]; predicate_id?: string[]; source_id?: string[]; deployment_id?: string } = {},
+  ) => http.get<GraphData>(`/kg/builds/${enc(buildId)}/graph${query(params)}`),
+  search: (buildId: string, q: string, deploymentId?: string) =>
+    http.get<GraphNode[]>(`/kg/builds/${enc(buildId)}/graph/search${query({ q, deployment_id: deploymentId })}`),
+  element: (buildId: string, elementId: string, deploymentId?: string) =>
+    http.get<GraphElementDetail>(
+      `/kg/builds/${enc(buildId)}/graph/elements/${enc(elementId)}${query({ deployment_id: deploymentId })}`,
+    ),
+
+  capabilities: () => http.get<GraphCapabilities>('/kg/graph-capabilities'),
+  compatibility: (buildId: string, params: { target_id?: string; kind?: string; mapping_profile?: string }) =>
+    http.get<CompatibilityRead>(`/kg/builds/${enc(buildId)}/compatibility${query(params)}`),
+  deployments: (buildId: string) => http.get<Deployment[]>(`/kg/builds/${enc(buildId)}/deployments`),
+  deploy: (buildId: string, body: DeploymentCreate) => http.post<Deployment>(`/kg/builds/${enc(buildId)}/deployments`, body),
+  queryDeployment: (deploymentId: string, sparql: string) =>
+    http.post<SparqlResult>(`/kg/deployments/${enc(deploymentId)}/query`, { query: sparql }),
 
   evaluation: (buildId: string) => http.get<Evaluation>(`/kg/builds/${enc(buildId)}/evaluation`),
   gaps: (buildId: string) => http.get<OntologyGap[]>(`/kg/builds/${enc(buildId)}/gaps`),

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutGrid, Network, RefreshCw, Search, Table2 } from 'lucide-react'
+import { AlertTriangle, Database, LayoutGrid, Network, RefreshCw, Search, Table2 } from 'lucide-react'
 import { cn } from 'cn'
 
 import { EmptyState, ErrorState, LoadingState } from '@/components/common/states'
@@ -10,6 +10,7 @@ import { kgApi } from '@/lib/api/endpoints'
 import type { BuildDetail, FacetCount, GraphData } from '@/lib/api/types'
 import { queryKeys } from '@/lib/query'
 import { NativeSelect } from '../fields'
+import { useDeployments } from '../hooks'
 import { classColor } from '../meta'
 import { GraphCanvas } from './GraphCanvas'
 import { GraphDetailsDrawer } from './GraphDetailsDrawer'
@@ -109,7 +110,23 @@ function GraphTable({ graph, onSelect }: { graph: GraphData; onSelect: (id: stri
   )
 }
 
-export function GraphExplorerView({ build }: { build: BuildDetail }) {
+export function GraphExplorerView({
+  build,
+  deploymentId,
+  onDeploymentChange,
+}: {
+  build: BuildDetail
+  deploymentId?: string
+  onDeploymentChange?: (deploymentId: string | null) => void
+}) {
+  const deployments = useDeployments(build.id)
+  const readable = useMemo(
+    () => (deployments.data ?? []).filter((d) => d.explorable && d.target_kind !== 'local-sql'),
+    [deployments.data],
+  )
+  const source = readable.find((d) => d.id === deploymentId)
+  const via = useMemo(() => readable.find((d) => d.id === deploymentId)?.id, [readable, deploymentId])
+  const waitingForSource = Boolean(deploymentId) && deployments.isPending
   const [classIds, setClassIds] = useState<string[]>([])
   const [predicateIds, setPredicateIds] = useState<string[]>([])
   const [sourceId, setSourceId] = useState('')
@@ -123,18 +140,20 @@ export function GraphExplorerView({ build }: { build: BuildDetail }) {
       class_id: classIds.length ? classIds : undefined,
       predicate_id: predicateIds.length ? predicateIds : undefined,
       source_id: sourceId ? [sourceId] : undefined,
+      deployment_id: via,
     }),
-    [classIds, predicateIds, sourceId],
+    [classIds, predicateIds, sourceId, via],
   )
   const graph = useQuery({
     queryKey: queryKeys.kgGraph(build.id, params),
     queryFn: () => kgApi.graph(build.id, params),
     placeholderData: (previous) => previous,
+    enabled: !waitingForSource,
   })
   const term = search.trim()
   const results = useQuery({
-    queryKey: ['kg-builds', build.id, 'search', term],
-    queryFn: () => kgApi.search(build.id, term),
+    queryKey: ['kg-builds', build.id, 'search', term, via ?? 'canonical'],
+    queryFn: () => kgApi.search(build.id, term, via),
     enabled: term.length >= 2,
   })
 
@@ -143,13 +162,50 @@ export function GraphExplorerView({ build }: { build: BuildDetail }) {
   const toggle = (list: string[], setter: (value: string[]) => void, id: string) =>
     setter(list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
 
-  if (graph.isPending) return <LoadingState label="Loading graph from the graph store…" />
-  if (graph.isError) return <ErrorState className="m-6" error={graph.error} onRetry={() => graph.refetch()} />
+  const sourcePicker = (
+    <div className="space-y-1.5">
+      <p className="flex items-center gap-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+        <Database className="size-3" /> Read from
+      </p>
+      <NativeSelect
+        aria-label="Graph source"
+        value={source?.id ?? ''}
+        onChange={(e) => onDeploymentChange?.(e.target.value || null)}
+        data-testid="graph-source"
+      >
+        <option value="">Canonical graph (local SQL)</option>
+        {readable.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.target_name} ({d.target_kind})
+          </option>
+        ))}
+      </NativeSelect>
+      {readable.length === 0 && (
+        <p className="text-[11px] text-muted-foreground">Deploy the build to a graph database to read it back from there.</p>
+      )}
+    </div>
+  )
+
+  if (graph.isPending)
+    return <LoadingState label={source ? `Reading the graph from ${source.target_name}…` : 'Loading graph from the graph store…'} />
+  if (graph.isError)
+    return (
+      <div className="m-6 space-y-3">
+        <div className="max-w-sm">{sourcePicker}</div>
+        <ErrorState error={graph.error} onRetry={() => graph.refetch()} />
+      </div>
+    )
   const data = graph.data
 
   return (
     <div className="flex h-full min-h-0">
       <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r p-4" aria-label="Graph filters">
+        {sourcePicker}
+        {(data.read_warnings ?? []).map((warning) => (
+          <p key={warning} className="flex gap-1 text-[11px] text-amber-700">
+            <AlertTriangle className="size-3 shrink-0" /> {warning}
+          </p>
+        ))}
         <div className="relative">
           <Search className="absolute top-2 left-2 size-4 text-muted-foreground" />
           <Input
@@ -207,6 +263,12 @@ export function GraphExplorerView({ build }: { build: BuildDetail }) {
           <p>
             Build #{data.build_number} · ontology v{data.ontology_version} · {data.graph_store ?? 'graph'} store
           </p>
+          {source && (
+            <p data-testid="graph-source-note">
+              Read back from <strong className="text-foreground">{source.target_name}</strong>; provenance details come from the
+              build's fact store.
+            </p>
+          )}
           {data.truncated && <p className="text-amber-700">Large graph truncated; use filters to narrow it down.</p>}
         </div>
       </aside>
@@ -253,6 +315,7 @@ export function GraphExplorerView({ build }: { build: BuildDetail }) {
           key={selected}
           buildId={build.id}
           elementId={selected}
+          deploymentId={via}
           colors={colors}
           onSelect={setSelected}
           onClose={() => setSelected(null)}

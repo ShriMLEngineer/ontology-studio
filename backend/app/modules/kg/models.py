@@ -214,3 +214,39 @@ class KgOntologyGap(Base):
     status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
     proposal_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+
+
+class KgGraphDeployment(Base):
+    """One deployment of a build's accepted facts to a graph database target (Phase 4.4).
+
+    Records the target, the versioned mapping and capability profiles, the compatibility report
+    (and who acknowledged any semantic loss), the expected and verified element counts and the
+    outcome. ``origin`` is ``build`` (written by the build), ``manual`` (deployed later) or
+    ``legacy`` (a factual record, created by migration 0007, of a pre-Phase-4 build's local SQL graph).
+    """
+
+    __tablename__ = "kg_graph_deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    build_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("kg_builds.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    project_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    target_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    target_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    data_model: Mapped[str] = mapped_column(String(20), nullable=False)
+    mapping_profile: Mapped[str] = mapped_column(String(60), nullable=False)
+    capability_profile: Mapped[str] = mapped_column(String(60), nullable=False)
+    data_namespace: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Where the graph lives in the target: {"graph_id": ...} or {"data": iri, "provenance": iri, "ontology": iri}.
+    graphs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    compatibility: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    acknowledged_loss_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useProjectScope } from '@/features/projects/hooks'
 import { ReviewerControl } from '@/features/ontology/governance/ReviewerControl'
+import { DeploymentsView } from './deployments/DeploymentsView'
 import { EvaluationView } from './evaluation/EvaluationView'
 import { GraphExplorerView } from './explorer/GraphExplorerView'
 import { FactValidationView } from './facts/FactValidationView'
@@ -15,7 +16,7 @@ import { useBuild, useBuilds, useKgVersions } from './hooks'
 import { PipelineView } from './pipeline/PipelineView'
 import { BuildStatusBadge } from './shared'
 
-const TABS = ['pipeline', 'explorer', 'facts', 'evaluation'] as const
+const TABS = ['pipeline', 'explorer', 'facts', 'evaluation', 'deployments'] as const
 type KgTab = (typeof TABS)[number]
 
 export function KnowledgeGraphStudioPage() {
@@ -48,7 +49,7 @@ export function KnowledgeGraphStudioPage() {
   const selectBuild = useCallback(
     (buildId: string) => {
       setCreating(false)
-      update({ build: buildId })
+      update({ build: buildId, deployment: null })
     },
     [update],
   )
@@ -117,6 +118,7 @@ export function KnowledgeGraphStudioPage() {
             )}
           </TabsTrigger>
           <TabsTrigger value="evaluation">Evaluation & Feedback</TabsTrigger>
+          <TabsTrigger value="deployments">Deployments</TabsTrigger>
         </TabsList>
       </div>
 
@@ -133,13 +135,33 @@ export function KnowledgeGraphStudioPage() {
         />
       </TabsContent>
       <TabsContent value="explorer" className="min-h-0 flex-1">
-        {completed ? <GraphExplorerView key={completed.id} build={completed} /> : needsCompleted}
+        {completed ? (
+          <GraphExplorerView
+            key={`${completed.id}:${searchParams.get('deployment') ?? ''}`}
+            build={completed}
+            deploymentId={searchParams.get('deployment') ?? undefined}
+            onDeploymentChange={(deploymentId) => update({ deployment: deploymentId })}
+          />
+        ) : (
+          needsCompleted
+        )}
       </TabsContent>
       <TabsContent value="facts" className="min-h-0 flex-1">
         {completed ? <FactValidationView key={completed.id} build={completed} /> : needsCompleted}
       </TabsContent>
       <TabsContent value="evaluation" className="min-h-0 flex-1 overflow-y-auto">
         {completed ? <EvaluationView key={completed.id} build={completed} projectId={projectId} /> : needsCompleted}
+      </TabsContent>
+      <TabsContent value="deployments" className="min-h-0 flex-1 overflow-y-auto">
+        {completed ? (
+          <DeploymentsView
+            key={completed.id}
+            build={completed}
+            onExplore={(deploymentId) => update({ tab: 'explorer', deployment: deploymentId })}
+          />
+        ) : (
+          needsCompleted
+        )}
       </TabsContent>
     </Tabs>
   )

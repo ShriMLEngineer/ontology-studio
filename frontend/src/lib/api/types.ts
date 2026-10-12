@@ -978,6 +978,9 @@ export interface GraphData {
   classes: FacetCount[]
   predicates: FacetCount[]
   sources: FacetCount[]
+  /** Set when the graph was read back from a deployment target. */
+  deployment_id?: string | null
+  read_warnings?: string[]
 }
 
 export interface GraphElementDetail {
@@ -994,6 +997,138 @@ export interface GraphElementDetail {
   ontology_version: string
   ontology_version_id: string
   project_id: string
+  deployment_id?: string | null
+}
+
+// ---------------------------------------------------------------------------------- graph deployments (Phase 4.4)
+
+export interface CapabilityProfile {
+  id: string
+  version: number
+  target_kind: string
+  label: string
+  data_model: 'rdf' | 'property-graph'
+  query_languages: string[]
+  multi_typing: string
+  named_graphs: boolean
+  language_tags: boolean
+  typed_literals: boolean
+  multi_valued_properties: boolean
+  statement_metadata: string
+  stores_ontology: boolean
+  reasoning: string
+  native_shacl: boolean
+  verified: boolean
+  notes: string[]
+  adapter_available: boolean
+}
+
+export interface MappingProfile {
+  id: string
+  data_model: 'rdf' | 'property-graph'
+  label: string
+  description: string
+  include_ontology: boolean
+  include_provenance: boolean
+}
+
+export interface GraphCapabilities {
+  profiles: CapabilityProfile[]
+  mapping_profiles: MappingProfile[]
+}
+
+export type CompatibilityOutcome = 'native' | 'transformed' | 'partial' | 'unsupported' | 'semantic_loss'
+
+export interface CompatibilityRow {
+  feature: string
+  scope: 'data' | 'ontology'
+  outcome: CompatibilityOutcome
+  detail: string
+  recommendation: string
+  affected: number
+}
+
+export interface CompatibilityReport {
+  target_kind: string
+  capability_profile: string
+  capability_profile_verified: boolean
+  mapping_profile: string
+  data_model: string
+  rows: CompatibilityRow[]
+  counts: Partial<Record<CompatibilityOutcome, number>>
+  has_semantic_loss: boolean
+  summary: string
+  data_features: Record<string, number>
+}
+
+export interface CompatibilityRead {
+  build_id: string
+  target_id: string | null
+  target_name: string
+  target_kind: string
+  adapter_available: boolean
+  report: CompatibilityReport
+}
+
+export type DeploymentStatus = 'running' | 'completed' | 'failed' | 'superseded'
+
+export interface Deployment {
+  id: string
+  build_id: string
+  build_number: number
+  project_id: string
+  target_id: string
+  target_name: string
+  target_kind: string
+  data_model: string
+  mapping_profile: string
+  capability_profile: string
+  data_namespace: string | null
+  graphs: Record<string, string>
+  compatibility: CompatibilityReport | null
+  acknowledged_loss_by: string | null
+  status: DeploymentStatus
+  stats: {
+    vertices?: number
+    edges?: number
+    triples?: number
+    duration_ms?: number
+    expected?: Record<string, number>
+    verified?: Record<string, number>
+  }
+  error: string | null
+  origin: 'build' | 'manual' | 'legacy'
+  requested_by: string
+  created_at: string
+  completed_at: string | null
+  explorable: boolean
+  queryable: boolean
+}
+
+export interface DeploymentCreate {
+  target_id: string
+  mapping_profile?: string | null
+  acknowledge_semantic_loss: boolean
+  requested_by: string
+}
+
+export interface SparqlTerm {
+  type: 'uri' | 'literal' | 'bnode' | 'triple'
+  value: string
+  datatype?: string | null
+  lang?: string | null
+}
+
+export interface SparqlResult {
+  form: 'select' | 'ask' | 'construct' | 'describe'
+  variables: string[]
+  rows: Record<string, SparqlTerm | null>[]
+  boolean: boolean | null
+  total: number
+  truncated: boolean
+  elapsed_ms: number
+  target: string
+  default_graph: string
 }
 
 export interface Metric {

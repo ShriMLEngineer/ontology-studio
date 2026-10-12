@@ -132,6 +132,8 @@ npm run lint
 npm run e2e:journey           # Phase 1 designer journey
 npm run e2e:governance        # Phase 2 journey with the configured REAL LLM (takes minutes on CPU)
 npm run e2e:kg                # Phase 3 KG journey; the PDF uses the REAL LLM (E2E_KG_SKIP_PDF=1 for CSV only)
+npm run e2e:semantic          # Phase 4 RDF/OWL import, reasoning, SHACL, policies and Settings (registers the local Ollama LLM)
+npm run e2e:graphs            # Phase 4 multi-graph: Oxigraph deployment, a real Oxigraph SPARQL server, SPARQL console
 # E2E_BROWSER_CHANNEL=chrome to use Chrome, E2E_HEADED=1 to watch
 ```
 

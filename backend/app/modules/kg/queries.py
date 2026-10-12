@@ -4,6 +4,7 @@ configured :class:`GraphStore`."""
 
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from functools import cached_property
 
 from sqlalchemy import select
@@ -40,6 +41,17 @@ from app.modules.registry.models import OntologyVersion
 from app.modules.sources.models import SourceChunk, SourceDocument
 
 GraphStoreFactory = Callable[[Session], GraphStore]
+_KIND_RANK = {"type": 0, "attribute": 1, "relationship": 2}
+
+
+@dataclass
+class GraphSource:
+    """Where explorer reads come from: a deployment target instead of the canonical store."""
+
+    store: GraphStore
+    deployment_id: str
+    label: str
+    warnings: list[str] = field(default_factory=list)
 
 
 class _BuildContext:
@@ -325,9 +337,11 @@ class KgQueryService:
         predicate_ids: list[str] | None = None,
         source_ids: list[str] | None = None,
         limit: int = 500,
+        via: GraphSource | None = None,
     ) -> GraphRead:
         ctx = self._context(build_id)
-        data = self.store.fetch_graph(build_id, limit=5000)
+        store = via.store if via else self.store
+        data = store.fetch_graph(build_id, limit=5000)
         class_counts = Counter(v.class_id for v in data.vertices)
         predicate_counts = Counter(e.predicate_id for e in data.edges)
         source_counts: Counter[str] = Counter()
@@ -346,13 +360,15 @@ class KgQueryService:
             edges = [e for e in edges if e.predicate_id in predicate_ids]
         if source_ids:
             edges = [e for e in edges if set(e.source_ids) & set(source_ids)]
-        total_nodes, total_edges = self.store.counts(build_id)
+        total_nodes, total_edges = store.counts(build_id)
         names = self._source_names(set(source_counts), ctx)
         return GraphRead(
             build_id=build_id,
             build_number=ctx.build.number,
             ontology_version=ctx.build.ontology_version,
-            graph_store=ctx.build.graph_store,
+            graph_store=via.label if via else ctx.build.graph_store,
+            deployment_id=via.deployment_id if via else None,
+            read_warnings=via.warnings if via else [],
             nodes=[self._node(v, ctx) for v in vertices],
             edges=[self._edge(e, ctx) for e in edges],
             truncated=truncated,
@@ -371,22 +387,28 @@ class KgQueryService:
             ),
         )
 
-    def search(self, build_id: str, text: str, class_id: str | None = None, limit: int = 20) -> list[GraphNodeRead]:
+    def search(
+        self, build_id: str, text: str, class_id: str | None = None, limit: int = 20, via: GraphSource | None = None
+    ) -> list[GraphNodeRead]:
         ctx = self._context(build_id)
+        store = via.store if via else self.store
         label = ctx.view.classes[class_id].local_name if class_id and class_id in ctx.view.classes else None
-        return [self._node(v, ctx) for v in self.store.search_vertices(build_id, text, label=label, limit=limit)]
+        return [self._node(v, ctx) for v in store.search_vertices(build_id, text, label=label, limit=limit)]
 
-    def neighborhood(self, build_id: str, vertex_id: str, depth: int = 1) -> GraphRead:
+    def neighborhood(self, build_id: str, vertex_id: str, depth: int = 1, via: GraphSource | None = None) -> GraphRead:
         ctx = self._context(build_id)
-        data = self.store.neighborhood(build_id, vertex_id, depth=depth, limit=200)
+        store = via.store if via else self.store
+        data = store.neighborhood(build_id, vertex_id, depth=depth, limit=200)
         if not data.vertices:
             raise NotFoundError(f"Node '{vertex_id}' is not in build #{ctx.build.number}.", code="GRAPH_NODE_NOT_FOUND")
-        total_nodes, total_edges = self.store.counts(build_id)
+        total_nodes, total_edges = store.counts(build_id)
         return GraphRead(
             build_id=build_id,
             build_number=ctx.build.number,
             ontology_version=ctx.build.ontology_version,
-            graph_store=ctx.build.graph_store,
+            graph_store=via.label if via else ctx.build.graph_store,
+            deployment_id=via.deployment_id if via else None,
+            read_warnings=via.warnings if via else [],
             nodes=[self._node(v, ctx) for v in data.vertices],
             edges=[self._edge(e, ctx) for e in data.edges],
             truncated=data.truncated,
@@ -397,47 +419,53 @@ class KgQueryService:
             sources=[],
         )
 
-    def _facts_by_ids(self, ids: list[str], ctx: _BuildContext) -> list[FactDetail]:
+    def _facts_by_ids(self, ids: list[str], ctx: _BuildContext, *, by_sequence: bool = False) -> list[FactDetail]:
         if not ids:
             return []
         facts = {f.id: f for f in self.session.scalars(select(KgCandidateFact).where(KgCandidateFact.id.in_(ids)))}
-        return [self._fact_detail(facts[i], ctx) for i in ids if i in facts]
+        ordered = [facts[i] for i in ids if i in facts]
+        if by_sequence:  # RDF targets do not keep provenance order; restore the canonical (kind, sequence) order
+            ordered.sort(key=lambda f: (_KIND_RANK.get(f.kind, 3), f.sequence))
+        return [self._fact_detail(f, ctx) for f in ordered]
 
-    def element(self, build_id: str, element_id: str) -> GraphElementDetail:
+    def element(self, build_id: str, element_id: str, via: GraphSource | None = None) -> GraphElementDetail:
         ctx = self._context(build_id)
+        store = via.store if via else self.store
         common = {
             "build_id": build_id,
             "build_number": ctx.build.number,
             "ontology_version": ctx.build.ontology_version,
             "ontology_version_id": ctx.build.ontology_version_id,
             "project_id": ctx.build.project_id,
+            "deployment_id": via.deployment_id if via else None,
         }
-        vertex = self.store.get_vertex(build_id, element_id)
+        reordered = via is not None
+        vertex = store.get_vertex(build_id, element_id)
         if vertex is not None:
-            edges = self.store.edges_of(build_id, vertex.id)
+            edges = store.edges_of(build_id, vertex.id)
             neighbour_ids = {e.in_id if e.out_id == vertex.id else e.out_id for e in edges}
-            neighbours = [n for n in (self.store.get_vertex(build_id, i) for i in sorted(neighbour_ids)) if n]
+            neighbours = [n for n in (store.get_vertex(build_id, i) for i in sorted(neighbour_ids)) if n]
             return GraphElementDetail(
                 kind="node",
                 node=self._node(vertex, ctx),
                 relationships=[self._edge(e, ctx) for e in edges],
                 neighbours=[self._node(n, ctx) for n in neighbours],
-                facts=self._facts_by_ids(self.store.provenance(build_id, vertex.id), ctx),
+                facts=self._facts_by_ids(store.provenance(build_id, vertex.id), ctx, by_sequence=reordered),
                 **common,
             )
-        edge = self.store.get_edge(build_id, element_id)
+        edge = store.get_edge(build_id, element_id)
         if edge is None:
             raise NotFoundError(
                 f"Graph element '{element_id}' is not in build #{ctx.build.number}.", code="GRAPH_ELEMENT_NOT_FOUND"
             )
-        subject = self.store.get_vertex(build_id, edge.out_id)
-        obj = self.store.get_vertex(build_id, edge.in_id)
+        subject = store.get_vertex(build_id, edge.out_id)
+        obj = store.get_vertex(build_id, edge.in_id)
         return GraphElementDetail(
             kind="edge",
             edge=self._edge(edge, ctx),
             subject=self._node(subject, ctx) if subject else None,
             object=self._node(obj, ctx) if obj else None,
-            facts=self._facts_by_ids(self.store.provenance(build_id, edge.id), ctx),
+            facts=self._facts_by_ids(store.provenance(build_id, edge.id), ctx, by_sequence=reordered),
             **common,
         )
 

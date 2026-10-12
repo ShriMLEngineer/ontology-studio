@@ -27,19 +27,21 @@ function NodeChip({ node, color, onSelect }: { node: GraphNode; color: string; o
 export function GraphDetailsDrawer({
   buildId,
   elementId,
+  deploymentId,
   colors,
   onSelect,
   onClose,
 }: {
   buildId: string
   elementId: string
+  deploymentId?: string
   colors: Record<string, string>
   onSelect: (id: string) => void
   onClose: () => void
 }) {
   const detail = useQuery({
-    queryKey: queryKeys.kgElement(buildId, elementId),
-    queryFn: () => kgApi.element(buildId, elementId),
+    queryKey: queryKeys.kgElement(buildId, elementId, deploymentId),
+    queryFn: () => kgApi.element(buildId, elementId, deploymentId),
   })
   const data = detail.data
   const title =

@@ -511,3 +511,46 @@ Gremlin) are listed as unavailable with the reason and cannot be registered; no 
 simulated. Configuration changes are written to the server log and recorded on the record
 (`updated_by`, `updated_at`); project default changes are project activity events.
 
+## ADR-047 The local SQL graph stays canonical; other stores receive verified deployments
+**Status:** Accepted (Phase 4.4; D6, D8)
+
+**Decision.** Every build writes its accepted facts to the local SQL property graph (unchanged
+Phase 3 behaviour and ids) and records that write as a deployment. RDF and other targets receive
+*deployments* of the same projection. A deployment is complete only when the counts read back from
+the target equal the projected counts. A failing target is recorded and never fails the build; the
+canonical graph, the facts and their provenance are unaffected.
+
+**Consequences.** Provenance, evaluation and build comparison keep one source of truth. The
+explorer can read any verified deployment back, which proves what the target holds rather than
+what was sent. Deployment records live in Knowledge Graph Studio, not in the ontology registry
+(D6). For D8 the embedded Oxigraph (pyoxigraph) and an Oxigraph SPARQL 1.1 server (the `oxigraph`
+CLI, a development dependency used by the integration tests and `npm run e2e:graphs`) were used;
+no Neo4j or Cosmos DB server was available, so those adapters are not built.
+
+## ADR-048 Provenance travels in a companion named graph, not RDF-star
+**Status:** Accepted (Phase 4.4)
+
+**Decision.** Each build's RDF projection has a data graph, a provenance graph and the ontology
+graph. Relationship provenance is a resource `{data_namespace}r/{edge_id}` typed
+`ols:Relationship` with subject, predicate, object, fact ids and source ids.
+
+**Alternatives.** RDF-star / reification of the data triples - rejected: RDF-star support is not
+uniform across SPARQL 1.1 stores, and standard reification would double the data graph.
+
+## ADR-049 Capability and mapping profiles are versioned; semantic loss is acknowledged explicitly
+**Status:** Accepted (Phase 4.4/4.5)
+
+**Decision.** Compatibility is computed from a versioned capability profile of the target and a
+versioned mapping profile, per build, and stored on the deployment. Only profiles of targets with an
+adapter are marked verified; others are labelled as documented assumptions and can only be
+previewed. Deploying with *semantic loss* rows requires an explicit acknowledgement that is recorded
+with the user's name. Canonicalised lexical forms of typed literals are reported as *transformed*.
+
+## ADR-050 The SPARQL console is read-only by construction
+**Status:** Accepted (Phase 4.4)
+
+**Decision.** Queries are parsed with the SPARQL 1.1 *query* grammar before execution, so every
+update form is rejected; federated `SERVICE` calls are refused; results are capped. The query runs
+against the deployment's graphs (default graph = data graph) through the same adapter as the
+deployment. No query is ever sent to a store as an update.
+
