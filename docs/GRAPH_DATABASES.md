@@ -26,7 +26,7 @@ graph data, and says nothing about write permission or deployment readiness.
 ### Provider fields
 
 * **Cosmos DB Gremlin** — account / Gremlin endpoint (account name, host or `wss://` URL), port (443),
-  database, graph/container, partition-key path (single level, e.g. `/pk`), account key
+  database, graph/container, partition-key path (single level, e.g. `/pk` or `/graphScope`), account key
   (environment-variable name), connection timeout. Plain `ws://` is accepted only for a local emulator.
 * **Neo4j** — Bolt URI (`bolt`, `bolt+s`, `bolt+ssc`, `neo4j`, `neo4j+s`, `neo4j+ssc`), database, user name,
   password (environment-variable name), timeout. Public hosts require an encrypted scheme; `+ssc`
@@ -107,6 +107,16 @@ extraction. A failing or unreachable target fails only its deployment; nothing f
   `x-ms-retry-after-ms`; scripts stay far below the 64 KB limit. Multi-valued attributes are kept exactly in a
   JSON property (single-valued ones are also plain properties). Search is evaluated on the fetched scope because
   case-insensitive containment is not a portable Gremlin predicate.
+
+For a Cosmos graph created with partition-key path `/graphScope`, register exactly `/graphScope` in
+Settings. Every deployed vertex receives `graphScope = <build id>`; both edge endpoints use that same
+partition value. Scope deletion, counts, and Explorer reads use the configured key. An ontology attribute
+named `graphScope` is renamed to `attr_graphScope` in the queryable projection and preserved under its
+original name in the JSON attributes, so it cannot overwrite the build's partition value. Scripted-client
+regressions cover `/graphScope` and the existing `/pk`, including writes for two build scopes and reads.
+This verifies adapter behavior, not a live Cosmos deployment. The registration must match the existing
+container's partition-key path; the read-only connection test does not validate that match. Each build
+occupies one logical partition, so Cosmos logical-partition limits still apply to large builds.
 
 Both property-graph stores implement the existing `GraphStore` read protocol, so the Graph Explorer (graph,
 search, neighbourhood, element detail with provenance) behaves the same on every target. RDF and property

@@ -43,6 +43,14 @@ parameters. Unsupported provider settings are rejected rather than silently drop
 The application makes no claim that an endpoint is reachable merely because it was
 registered; use **Test connection** to run an actual provider-specific request.
 
+Direct OpenAI registrations use Responses for GPT-5, GPT-6 (including `gpt-6-luna`),
+and recognized o-series reasoning models. These requests omit temperature and translate
+the registered `reasoning_effort` setting to Responses' `reasoning.effort` format.
+Other model identifiers retain Chat Completions behavior. An OpenAI connection test
+checks model availability, not whether a discovery schema and inference settings are
+accepted. HTTP 400 inference failures report recognized rejected settings or schema
+errors without echoing raw provider messages.
+
 ## Selection and migration
 
 Projects may set distinct defaults for ontology discovery and KG extraction. A build's

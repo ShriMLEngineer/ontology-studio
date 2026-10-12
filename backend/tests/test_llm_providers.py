@@ -73,10 +73,11 @@ def test_openai_direct_uses_chat_and_validates_pydantic_output() -> None:
     assert client.calls[-1] == {"api": "model-retrieve", "model": "gpt-4.1-mini"}
 
 
-def test_reasoning_model_uses_responses_without_temperature() -> None:
+@pytest.mark.parametrize("model", ["o3-mini", "gpt-5", "gpt-5.4", "gpt-6-luna"])
+def test_reasoning_model_uses_responses_without_temperature(model: str) -> None:
     client = FakeOpenAI()
     provider = OpenAIProvider(
-        model="o3-mini",
+        model=model,
         api_key="test-secret",
         base_url="https://api.openai.com/v1",
         timeout_seconds=10,
@@ -88,6 +89,22 @@ def test_reasoning_model_uses_responses_without_temperature() -> None:
     assert result.value.answer == "done"
     assert client.calls[0]["api"] == "responses"
     assert "temperature" not in client.calls[0]
+
+
+def test_responses_maps_registered_reasoning_effort() -> None:
+    client = FakeOpenAI()
+    provider = build_registered_provider(
+        provider="openai", model="gpt-6-luna", api_key="test-secret",
+        base_url="https://api.openai.com/v1", timeout_seconds=10,
+        max_output_tokens=500, temperature=0.4, max_repair_attempts=1,
+        structured_output="json_schema",
+        provider_config={"inference_parameters": {"reasoning_effort": "low"}},
+    )
+    provider._client_factory = lambda **_: client
+    provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
+    assert client.calls[0]["api"] == "responses"
+    assert client.calls[0]["reasoning"] == {"effort": "low"}
+    assert "reasoning_effort" not in client.calls[0]
 
 
 def test_openai_errors_are_sanitized() -> None:
@@ -107,6 +124,36 @@ def test_openai_errors_are_sanitized() -> None:
     with pytest.raises(LLMTransportError, match="rejected the configured credentials") as caught:
         provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
     assert "test-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "code,parameter,expected",
+    [
+        ("unsupported_parameter", "temperature", "'temperature' setting"),
+        ("invalid_value", "reasoning.effort", "'reasoning.effort' setting"),
+        ("invalid_json_schema", "response_format", "structured-output format or JSON schema"),
+        ("test-secret", "test-secret", "model API compatibility"),
+    ],
+)
+def test_openai_bad_requests_are_actionable_without_echoing_provider_text(
+    code: str, parameter: str, expected: str,
+) -> None:
+    class BadRequest(OpenAIError):
+        status_code = 400
+
+    error = BadRequest("test-secret private source content")
+    error.code = code
+    error.param = parameter
+    client = FakeOpenAI(error=error)
+    provider = OpenAIProvider(
+        model="gpt-6-luna", api_key="test-secret", base_url="https://api.openai.com/v1",
+        timeout_seconds=10, max_output_tokens=500, temperature=0,
+        client_factory=lambda **_: client,
+    )
+    with pytest.raises(LLMTransportError, match=expected) as caught:
+        provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
+    assert "test-secret" not in str(caught.value) and "private source content" not in str(caught.value)
+    assert len(client.calls) == 1
 
 
 def test_exhausted_quota_is_reported_clearly_and_not_retried() -> None:

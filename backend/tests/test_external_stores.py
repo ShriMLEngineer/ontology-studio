@@ -334,21 +334,29 @@ def test_cosmos_failures_are_provider_specific_and_redacted(
     assert "COSMOS_KEY is not set" in check_cosmos(COSMOS_CONFIG, "COSMOS_KEY").message
 
 
-def test_cosmos_store_addresses_partitions_and_never_interpolates_data() -> None:
+@pytest.mark.parametrize("partition_key", ["pk", "graphScope"])
+def test_cosmos_store_addresses_partitions_and_never_interpolates_data(partition_key: str) -> None:
     client = ScriptedGremlin()
-    store = CosmosGremlinStore(client, "pk")
-    store.replace_scope("build-1", _vertices(), _edges())
+    store = CosmosGremlinStore(client, partition_key)
+    vertices = _vertices()
+    for vertex in vertices:
+        vertex.properties[partition_key] = ["ontology-attribute-not-the-build-id"]
+    store.replace_scope("build-1", vertices, _edges())
     queries = [q for q, _ in client.calls]
-    assert queries[0].startswith("g.V().has('pk', s_pk).limit(100).drop()"), "clearing is partition-scoped and batched"
+    assert queries[0].startswith(f"g.V().has('{partition_key}', s_pk).limit(100).drop()"), "clearing is partition-scoped and batched"
     vertex_calls = [(q, b) for q, b in client.calls if q.startswith("g.addV")]
     edge_calls = [(q, b) for q, b in client.calls if ".addE(" in q]
     assert len(vertex_calls) == 2 and len(edge_calls) == 1
+    for query, bindings in vertex_calls:
+        assert query.count(f".property('{partition_key}',") == 1
+        assert f".property('{partition_key}', v_pk)" in query
+        assert bindings["v_pk"] == "build-1", "every vertex carries the build id as its partition-key value"
     odd_query = next(q for q, b in vertex_calls if b["v_id"] == "v2")
     assert odd_query.startswith("g.addV('Odd_Label___drop__')"), "labels are reduced to identifier characters"
     first_query, first_bindings = next((q, b) for q, b in vertex_calls if b["v_id"] == "v1")
     assert first_bindings["v_pk"] == "build-1" and first_bindings["s_name"] == "Acme"
     assert first_query.count(".property('id', v_id)") == 1, "an attribute named id cannot replace the vertex id"
-    assert ".property('pk', v_pk)" in first_query and "attr_pk" in first_query, "the partition key is protected"
+    assert f"attr_{partition_key}" in first_query, "an ontology attribute cannot overwrite the partition key"
     for value in ("Acme", "EXT-1", "build-1"):
         assert all(value not in q for q in queries), "values travel as bindings only"
     assert json.loads(first_bindings["s_props"])["name"] == ["Acme"], "multi-valued attributes are kept exactly"
@@ -356,6 +364,40 @@ def test_cosmos_store_addresses_partitions_and_never_interpolates_data() -> None
     assert edge_query.startswith("g.V([e_pk, e_out]).addE('PLACED_BY').to(g.V([e_pk, e_in]))")
     assert edge_bindings["e_pk"] == "build-1" and edge_bindings["e_out"] == "v2" and edge_bindings["e_in"] == "v1"
     assert max(len(q) for q in queries) < 64 * 1024, "scripts stay below the 64 KB Cosmos limit"
+
+
+def test_cosmos_graph_scope_configuration_reaches_writes_and_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.modules.graph.targets.catalog import normalize_config
+
+    config, secret_env = normalize_config(
+        "cosmos-gremlin", {**COSMOS_CONFIG, "partition_key_path": "/graphScope"}, "COSMOS_KEY",
+        allow_private=True,
+    )
+    monkeypatch.setenv("COSMOS_KEY", SECRET)
+    client = ScriptedGremlin(lambda query, bindings: [0] if ".count()" in query else [])
+    monkeypatch.setattr(gremlin_store, "_create_client", lambda settings: client)
+    gremlin_store.close_clients()
+    try:
+        store = CosmosGremlinStore.connect(PropertyTarget("cosmos-gremlin", config, secret_env))
+        assert store.pk == "graphScope"
+        for scope in ("build-1", "build-2"):
+            client.calls.clear()
+            store.replace_scope(scope, _vertices(), _edges())
+            assert store.counts(scope) == (0, 0)
+            assert store.get_vertex(scope, "v1") is None
+            vertex_calls = [(q, b) for q, b in client.calls if q.startswith("g.addV")]
+            assert len(vertex_calls) == len(_vertices())
+            assert all(".property('graphScope', v_pk)" in q and b["v_pk"] == scope for q, b in vertex_calls)
+            for query, bindings in client.calls:
+                if "s_pk" in bindings:
+                    assert ".has('graphScope', s_pk)" in query and bindings["s_pk"] == scope
+                if "e_pk" in bindings:
+                    assert "g.V([e_pk, e_out])" in query and "g.V([e_pk, e_in])" in query
+                    assert bindings["e_pk"] == scope
+                if query == "g.V([v_pk, v_id])":
+                    assert bindings == {"v_pk": scope, "v_id": "v1"}
+    finally:
+        gremlin_store.close_clients()
 
 
 def test_cosmos_throttling_is_retried_with_the_service_hint() -> None:
@@ -377,11 +419,12 @@ def test_cosmos_throttling_is_retried_with_the_service_hint() -> None:
     assert SECRET not in str(caught.value)
 
 
-def test_cosmos_reads_decode_documented_element_shapes() -> None:
+@pytest.mark.parametrize("partition_key", ["pk", "graphScope"])
+def test_cosmos_reads_decode_documented_element_shapes(partition_key: str) -> None:
     vertex_doc = {
         "id": "v1", "label": "Supplier", "type": "vertex",
         "properties": {
-            "pk": [{"id": "a", "value": "build-1"}],
+            partition_key: [{"id": "a", "value": "build-1"}],
             "_ols_name": [{"id": "b", "value": "Acme"}],
             "_ols_class_id": [{"id": "c", "value": "c1"}],
             "_ols_props": [{"id": "d", "value": json.dumps({"name": ["Acme"], "tags": ["a", "b"]})}],
@@ -406,7 +449,8 @@ def test_cosmos_reads_decode_documented_element_shapes() -> None:
             return [edge_doc]
         return [vertex_doc, {**vertex_doc, "id": "v2", "properties": {**vertex_doc["properties"], "_ols_name": [{"id": "x", "value": "PO"}]}}]
 
-    store = CosmosGremlinStore(ScriptedGremlin(respond), "pk")
+    client = ScriptedGremlin(respond)
+    store = CosmosGremlinStore(client, partition_key)
     vertex = store.get_vertex("build-1", "v1")
     assert vertex is not None and vertex.name == "Acme" and vertex.label == "Supplier"
     assert vertex.properties == {"name": ["Acme"], "tags": ["a", "b"]} and vertex.fact_ids == ["f1", "f2"]
@@ -419,5 +463,11 @@ def test_cosmos_reads_decode_documented_element_shapes() -> None:
     assert store.counts("build-1") == (2, 1)
     assert [v.id for v in store.search_vertices("build-1", "po")] == ["v2"]
     assert store.provenance("build-1", "v1") == ["f1", "f2"]
+    assert store.get_edge("build-1", "e1") is not None
+    for query, bindings in client.calls:
+        if "s_pk" in bindings:
+            assert f".has('{partition_key}', s_pk)" in query and bindings["s_pk"] == "build-1"
+        if "v_pk" in bindings:
+            assert query.startswith("g.V([v_pk, v_id])") and bindings["v_pk"] == "build-1"
     with pytest.raises(DeploymentError, match="unexpected vertex shape"):
         CosmosGremlinStore(ScriptedGremlin(lambda q, b: ["not-a-document"]), "pk").get_vertex("s", "v")

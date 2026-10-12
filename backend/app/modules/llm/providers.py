@@ -31,7 +31,7 @@ from app.modules.llm.provider import (
 )
 
 logger = logging.getLogger(__name__)
-_REASONING_MODEL = re.compile(r"^(o[134]\b|gpt-5(?:[-.]|$))", re.IGNORECASE)
+_REASONING_MODEL = re.compile(r"^(o[134]\b|gpt-[56](?:[-.]|$))", re.IGNORECASE)
 _PROVIDER_ERRORS = (AnthropicError, AzureError, OpenAIError)
 _QUOTA_EXHAUSTED = {"insufficient_quota", "credit_balance_exhausted"}
 
@@ -58,6 +58,17 @@ def _safe_error(error: Exception, timeout: float) -> str:
         return "The configured model or deployment was not found."
     if status == 429:
         return "The provider rate limit was reached. Try again later."
+    if status == 400:
+        code = getattr(error, "code", None)
+        parameter = getattr(error, "param", None)
+        if code in {"unsupported_parameter", "unsupported_value", "invalid_value"} and parameter in {
+            "temperature", "top_p", "reasoning_effort", "reasoning.effort",
+            "max_output_tokens", "max_completion_tokens",
+        }:
+            return f"The model rejected the '{parameter}' setting (HTTP 400). Check its inference settings in Settings."
+        if parameter in {"response_format", "text.format", "text.format.schema"}:
+            return "The model rejected the structured-output format or JSON schema (HTTP 400)."
+        return "The provider rejected the inference request (HTTP 400). Check model API compatibility and inference settings."
     if isinstance(status, int) and status >= 500:
         return f"The provider is temporarily unavailable (HTTP {status})."
     if status:
@@ -196,6 +207,8 @@ class OpenAIProvider(_StructuredSdkProvider):
             parameters.setdefault("temperature", self._temperature)
         client = self._client(self._timeout)
         if self._api_style == "responses":
+            if "reasoning_effort" in parameters:
+                parameters["reasoning"] = {"effort": parameters.pop("reasoning_effort")}
             response = client.responses.parse(
                 model=self._model,
                 input=[{"role": "system", "content": system}, {"role": "user", "content": user}],
