@@ -1,4 +1,4 @@
-"""Milestones 3.2-3.4 on structured sources: deterministic mapping, entity resolution, fact
+"""Structured sources: deterministic mapping, entity resolution, fact
 validation, graph persistence with provenance, evaluation and ontology feedback."""
 
 from typing import Any

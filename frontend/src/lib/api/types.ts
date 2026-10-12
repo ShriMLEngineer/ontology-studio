@@ -62,7 +62,7 @@ export interface OntologyMetadata {
   namespace: string
   prefix: string
   description: string
-  /** Phase 4 ontology header. Omitted fields are left unchanged by the backend on save. */
+  /** Ontology header. Omitted fields are left unchanged by the backend on save. */
   ontology_iri?: string | null
   prefixes?: PrefixBinding[]
   imports?: string[]
@@ -107,8 +107,7 @@ export interface Ontology extends OntologyMetadata {
   updated_at: string
 }
 
-// ------------------------------------------------------------------ OWL semantics (Phase 4)
-
+// ------------------------------------------------------------------ OWL semantics
 export type Characteristic =
   | 'functional'
   | 'inverse_functional'
@@ -290,8 +289,7 @@ export interface ActivityEvent {
   created_at: string
 }
 
-// ----------------------------------------------------------------------------- Phase 2: LLM & sources
-
+// ----------------------------------------------------------------------------- LLM & sources
 export interface LLMStatus {
   configured: boolean
   config_name?: string | null
@@ -318,8 +316,7 @@ export interface SourceDocument {
   created_at: string
 }
 
-// ----------------------------------------------------------------------------- Phase 2: discovery
-
+// ----------------------------------------------------------------------------- discovery
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 export interface DiscardedFinding {
@@ -367,8 +364,7 @@ export interface DiscoveryRunCreate {
   llm_config_id?: string | null
 }
 
-// ----------------------------------------------------------------------------- Phase 2: governance
-
+// ----------------------------------------------------------------------------- governance
 export type ProposalType = 'add' | 'reuse' | 'alias' | 'modify' | 'conflict'
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'needs_refinement' | 'applied'
 export type ProposalElementKind = 'class' | 'object_property' | 'datatype_property'
@@ -483,8 +479,7 @@ export interface ApplyResult {
   changes: DraftChangeSummary
 }
 
-// ----------------------------------------------------------------------------- Phase 2: registry
-
+// ----------------------------------------------------------------------------- registry
 export type ArtifactFormat = 'json' | 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples' | 'shapes' | 'manifest'
 
 export interface VersionArtifact {
@@ -583,8 +578,7 @@ export interface PublishRequest {
   bump?: VersionBump | null
   expected_draft_revision?: number | null
 }
-// ------------------------------------------------------------------------- knowledge graph (Phase 3)
-
+// ------------------------------------------------------------------------- knowledge graph
 export interface ColumnProfile {
   name: string
   non_empty: number
@@ -689,7 +683,7 @@ export interface BuildSettings {
   batch_chars: number
   extract_attributes: boolean
   instructions: string
-  /** Validation policy id (Phase 4); builds before Phase 4 report the default. */
+  /** Validation policy id; builds created before policies existed report the default. */
   validation_policy?: string
   /** Registered configurations (Settings); null = the project's default. */
   llm_config_id?: string | null
@@ -831,7 +825,7 @@ export interface FactSummary {
   document_ids: string[]
   source_label: string
   graph_element_id: string | null
-  /** Most severe SHACL result; null for builds evaluated before Phase 4. */
+  /** Most severe SHACL result; null for builds evaluated before SHACL validation existed. */
   shacl_status: 'conforms' | 'Violation' | 'Warning' | 'Info' | null
   policy_id: string | null
 }
@@ -1006,8 +1000,7 @@ export interface GraphElementDetail {
   deployment_id?: string | null
 }
 
-// ---------------------------------------------------------------------------------- graph deployments (Phase 4.4)
-
+// ---------------------------------------------------------------------------------- graph deployments
 export interface CapabilityProfile {
   id: string
   version: number
@@ -1209,8 +1202,7 @@ export interface BuildComparison {
   metrics: { key: string; label: string; unit: string; base: number | null; target: number | null }[]
 }
 
-// ------------------------------------------------------------------ semantics (Phase 4)
-
+// ------------------------------------------------------------------ semantics
 export type RdfFormat = 'turtle' | 'rdfxml' | 'jsonld' | 'ntriples'
 
 export interface ExtensionAxiom {
@@ -1284,8 +1276,7 @@ export interface EntailmentReport {
   duration_ms: number
 }
 
-// ------------------------------------------------------------------ SHACL shapes (Phase 4.2)
-
+// ------------------------------------------------------------------ SHACL shapes
 export type ShapeSeverity = 'Violation' | 'Warning' | 'Info'
 export type NodeKind = 'IRI' | 'Literal' | 'BlankNode' | 'BlankNodeOrIRI' | 'BlankNodeOrLiteral' | 'IRIOrLiteral'
 
@@ -1351,8 +1342,7 @@ export interface ShaclValidationReport {
   results: ShaclResultRead[]
 }
 
-// ------------------------------------------------------------------ Settings (Phase 4)
-
+// ------------------------------------------------------------------ Settings
 export const ENV_DEFAULT_LLM = 'env-default'
 export const LOCAL_SQL_GRAPH = 'local-sql'
 
@@ -1506,8 +1496,7 @@ export interface ProjectDefaultsUpdate {
   data_namespace?: string | null
 }
 
-// ---------------------------------------------------------------------------------- project lifecycle (Phase 4)
-
+// ---------------------------------------------------------------------------------- project lifecycle
 export type LifecycleStageKey =
   | 'sources'
   | 'discovery'

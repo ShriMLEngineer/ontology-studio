@@ -1,5 +1,5 @@
 /**
- * End-to-end check of the Phase 4 Project Lifecycle Navigator (Project Workspace):
+ * End-to-end check of the Project Lifecycle Navigator (Project Workspace):
  *   iteration 1 statuses follow real work (publication, mappings, KG build, deployment) ->
  *   a new source makes the build outdated -> a new iteration starts at "KG build" from the dialog,
  *   reusing the earlier outputs -> iteration 1 stays frozen -> a build in iteration 2 completes the
@@ -80,7 +80,7 @@ async function build(name) {
   return result
 }
 
-console.log(`Ontology Lifecycle Studio - Phase 4 lifecycle navigator journey against ${BASE_URL}`)
+console.log(`Ontology Lifecycle Studio - lifecycle navigator journey against ${BASE_URL}`)
 try {
   await step('Workspace shows iteration 1 with the lifecycle as a graphical workflow', async () => {
     project = (await api('GET', '/projects')).body.find((p) => p.name === 'Supply Chain')

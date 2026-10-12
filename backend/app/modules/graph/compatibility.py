@@ -1,4 +1,4 @@
-"""Graph Compatibility Report: what a target preserves of an ontology version and a build (Phase 4.4).
+"""Graph Compatibility Report: what a target preserves of an ontology version and a build.
 
 Generated per (ontology version, projection, capability profile, mapping profile) and stored on
 every deployment. A report with *semantic loss* rows requires an explicit acknowledgement before

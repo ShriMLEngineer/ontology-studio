@@ -1,4 +1,4 @@
-"""kg graph deployments (Phase 4 milestones 4.4/4.5)
+"""kg graph deployments
 
 Records where each build's graph is deployed. Additive. Every build that completed before this
 migration gets one factual ``legacy`` record of the local SQL property graph it already wrote

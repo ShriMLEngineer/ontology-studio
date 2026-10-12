@@ -1,4 +1,4 @@
-"""Generate the sample PDF used by the Phase 3 knowledge-graph demonstration.
+"""Generate the sample PDF used by the knowledge-graph demonstration.
 
 Run from the repository root (standard library only):
 

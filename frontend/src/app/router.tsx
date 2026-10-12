@@ -19,6 +19,10 @@ export const router = createBrowserRouter([
       { path: 'ontology', element: <OntologyStudioPage /> },
       { path: 'settings', element: <SettingsPage /> },
       {
+        path: 'about',
+        lazy: async () => ({ Component: (await import('@/features/about/AboutPage')).AboutPage }),
+      },
+      {
         path: 'knowledge-graph',
         // Loaded on demand: the graph explorer (Cytoscape.js) is only needed in this section.
         lazy: async () => ({ Component: (await import('@/features/kg/KnowledgeGraphStudioPage')).KnowledgeGraphStudioPage }),

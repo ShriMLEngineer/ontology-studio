@@ -49,7 +49,7 @@ RDF_EXPORT_FORMATS = ("turtle", "rdfxml", "jsonld", "ntriples")
 DRAFT = "draft"
 PACKAGE_FORMAT = "ols-semantic/2"
 SEMANTIC_PROFILE = "ols-semantic-profile/1"
-GENERATOR = "Ontology Lifecycle Studio (Phase 4)"
+GENERATOR = "Ontology Lifecycle Studio"
 
 
 class ArtifactUnavailableError(DomainError):
@@ -391,7 +391,7 @@ class RegistryService:
     def export(self, ontology_id: str, version_id: str, fmt: ExportFormat) -> tuple[bytes, StoredArtifact, bool]:
         """Return (content, artifact, derived). Stored artifacts are verified by SHA-256.
 
-        Legacy (pre-Phase 4) versions only stored Turtle and JSON; other RDF syntaxes are *derived*
+        Legacy versions only stored Turtle and JSON; other RDF syntaxes are *derived*
         from the stored Turtle (same graph, different syntax) and labelled as such. Nothing is written.
         """
         version = self._require_version(ontology_id, version_id)

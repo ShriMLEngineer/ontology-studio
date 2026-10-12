@@ -1,4 +1,4 @@
-"""SHACL shapes for knowledge-graph data (Phase 4, milestone 4.2).
+"""SHACL shapes for knowledge-graph data.
 
 Three kinds of shapes make up the shapes graph of an ontology draft or published version:
 

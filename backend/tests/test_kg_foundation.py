@@ -1,4 +1,4 @@
-"""Milestone 3.1: data sources, mappings, published-version enforcement and build configuration."""
+"""Data sources, mappings, published-version enforcement and build configuration."""
 
 from typing import Any
 

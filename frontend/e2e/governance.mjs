@@ -1,5 +1,5 @@
 /**
- * End-to-end check of the Phase 2 governance journey with a REAL configured LLM:
+ * End-to-end check of the governance journey with a REAL configured LLM:
  * upload source -> AI discovery -> SME review (comment, refinement, edit, approve, reject)
  * -> apply to draft -> validate -> publish immutable version -> compare -> export Turtle.
  *
@@ -61,7 +61,7 @@ let approvedClass
 let rejectedId
 let version
 
-console.log(`Ontology Lifecycle Studio - Phase 2 governance journey against ${BASE_URL}`)
+console.log(`Ontology Lifecycle Studio - governance journey against ${BASE_URL}`)
 try {
   await step('Open Ontology Studio and identify the reviewer', async () => {
     project = (await api('GET', '/projects')).body.find((p) => p.name === 'Supply Chain')

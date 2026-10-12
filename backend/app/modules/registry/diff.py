@@ -11,7 +11,7 @@ from app.modules.registry.snapshot import OntologySnapshot
 Bump = Literal["major", "minor", "patch", "none"]
 _SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _KINDS = (("class", "classes"), ("object_property", "object_properties"), ("datatype_property", "datatype_properties"))
-# Since Phase 4 the persisted IRI identifies an element; local_name changes only break consumers
+# The persisted IRI identifies an element; local_name changes only break consumers
 # when the IRI changes too (legacy snapshots derive the IRI from the local name).
 _BREAKING_FIELDS = {"iri", "domain_id", "range_id", "datatype"}
 _MINOR_FIELDS = {"required", "multi_valued", "semantics"}

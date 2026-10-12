@@ -1,7 +1,7 @@
 """KG build orchestrator: a deterministic, staged workflow executed outside the HTTP request.
 
-Builds created since Phase 4 run ten stages (SHACL validation after structural validation); builds
-created earlier keep their nine recorded stages and the Phase 3 evaluation.
+Builds created with SHACL validation run ten stages (SHACL validation after structural validation); builds
+created earlier keep their nine recorded stages and the original evaluation.
 
 Every stage transition, count and log line is persisted on the build so the UI reports real
 progress. The workflow never raises: failures are recorded on the stage and the build. Only
@@ -653,8 +653,7 @@ class _Run:
         )
         return fact_assessments
 
-    # ------------------------------------------------------------------ 7. SHACL validation (Phase 4)
-
+    # ------------------------------------------------------------------     7. SHACL validation
     def stage_shacl_validation(
         self,
         resolution: ResolutionResult,

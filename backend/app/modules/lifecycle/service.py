@@ -1,4 +1,4 @@
-"""Project lifecycle navigator (Phase 4): iterations and per-iteration stage status.
+"""Project lifecycle navigator: iterations and per-iteration stage status.
 
 Statuses are derived from the project's real records - sources, discovery runs, proposals and SME
 decisions, validation runs, published versions, source mappings, KG builds, graph deployments and

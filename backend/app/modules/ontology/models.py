@@ -4,7 +4,7 @@ The draft is the mutable working copy of a long-lived ontology asset. Element ro
 keyed by ``(ontology_id, id)`` where ``id`` is a stable element identifier that survives
 renames of labels and local names. Cross-element references (parents, domain, range) are
 stored as element ids rather than foreign keys so that a draft can temporarily hold
-inconsistent work-in-progress; the validation module reports such issues and (from Phase 2)
+inconsistent work-in-progress; the validation module reports such issues and
 publication is gated on a clean validation.
 """
 
@@ -31,7 +31,7 @@ class Ontology(TimestampMixin, Base):
     prefix: Mapped[str] = mapped_column(String(40), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     draft_revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    # Ontology header (Phase 4). ``ontology_iri`` None means "derived from the namespace".
+    # Ontology header. ``ontology_iri`` None means "derived from the namespace".
     ontology_iri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     prefixes: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)
     imports: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]", nullable=False)

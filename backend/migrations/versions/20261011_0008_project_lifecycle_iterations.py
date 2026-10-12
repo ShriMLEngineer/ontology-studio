@@ -1,4 +1,4 @@
-"""project lifecycle iterations (Phase 4 Project Lifecycle Navigator)
+"""project lifecycle iterations (Project Lifecycle Navigator)
 
 Additive. Every existing project gets iteration #1, active, starting at the project's creation and
 at the first stage, so all earlier work belongs to it and nothing is marked as reused.

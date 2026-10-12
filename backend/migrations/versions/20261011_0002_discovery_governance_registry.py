@@ -1,4 +1,4 @@
-"""phase2 discovery governance registry
+"""discovery governance registry
 
 Revision ID: 0002
 Revises: 0001

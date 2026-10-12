@@ -1,4 +1,4 @@
-"""Phase 4 milestone 4.1 - semantic foundation.
+"""Semantic foundation.
 
 Persisted IRIs and their lock, OWL semantics, lossless RDF import/export with preserved axioms,
 legacy-version compatibility, migration 0004, entailment preview and the new structural rules.
@@ -166,7 +166,7 @@ def test_exported_rdf_reimports_to_the_same_model(fmt: str) -> None:
     assert ontology_axioms(second) == ontology_axioms(first)
 
 
-def test_phase3_published_turtle_reimports_with_explicit_owl_semantics() -> None:
+def test_legacy_published_turtle_reimports_with_explicit_owl_semantics() -> None:
     legacy = to_turtle(_seed_snapshot(), version="1.0.0", published_at=datetime.now(UTC), release_notes="First")
     result = import_graph(parse_rdf(legacy, "turtle"), rdf_format="turtle")
     report = result.report
@@ -205,7 +205,7 @@ def _import(client: TestClient, project_id: str, content: str = SAMPLE, **data: 
 
 
 def _legacy_save_body(draft: dict[str, Any]) -> dict[str, Any]:
-    """A Phase 1-3 client payload: no IRIs, no semantics, no header fields."""
+    """A legacy client payload: no IRIs, no semantics, no header fields."""
 
     def strip(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [{k: v for k, v in e.items() if k not in ("iri", "semantics")} for e in items]
@@ -235,7 +235,7 @@ def test_import_api_preserves_axioms_through_designer_saves_and_publication(clie
     axioms = client.get(f"/api/ontologies/{oid}/axioms").json()
     assert len(axioms) == record["report"]["preserved_axioms"] and not any(a["orphaned"] for a in axioms)
 
-    # A Phase 1-3 client saves the draft without knowing about IRIs, semantics or axioms.
+    # A legacy client saves the draft without knowing about IRIs, semantics or axioms.
     draft = client.get(f"/api/ontologies/{oid}/draft").json()
     person = next(c for c in draft["classes"] if c["local_name"] == "Person")
     saved = client.put(f"/api/ontologies/{oid}/draft", json=_legacy_save_body(draft))
@@ -356,7 +356,7 @@ def test_iris_are_minted_followed_and_locked_after_publication(seeded_client: Te
 
 
 def _insert_legacy_version(client: TestClient, ontology_id: str) -> tuple[str, bytes]:
-    """A version exactly as Phase 1-3 published it: snapshot /1 + frozen Turtle + JSON artifacts."""
+    """A version exactly as the legacy publisher produced it: snapshot /1 + frozen Turtle + JSON artifacts."""
     seed = _seed_snapshot()
     legacy = json.loads(seed.model_dump_json(exclude={"extension_axioms"}))
     legacy["format"] = "ols.ontology-snapshot/1"
@@ -365,7 +365,7 @@ def _insert_legacy_version(client: TestClient, ontology_id: str) -> tuple[str, b
         legacy[key] = [{k: v for k, v in e.items() if k not in ("iri", "semantics")} for e in legacy[key]]
     snapshot = OntologySnapshot.model_validate(legacy)
     published_at = datetime(2026, 1, 15, tzinfo=UTC)
-    turtle = to_turtle(snapshot, version="1.0.0", published_at=published_at, release_notes="Phase 3 release")
+    turtle = to_turtle(snapshot, version="1.0.0", published_at=published_at, release_notes="Legacy release")
     version_id = new_id()
     repo = client.app.state.artifact_repository  # type: ignore[attr-defined]
     stored = {
@@ -384,7 +384,7 @@ def _insert_legacy_version(client: TestClient, ontology_id: str) -> tuple[str, b
                 object_property_count=len(legacy["object_properties"]),
                 datatype_property_count=len(legacy["datatype_properties"]), validation_run_id=run.id,
                 validation_summary={"is_valid": True}, change_summary={}, previous_version_id=None,
-                artifacts={k: v.as_dict() for k, v in stored.items()}, release_notes="Phase 3 release",
+                artifacts={k: v.as_dict() for k, v in stored.items()}, release_notes="Legacy release",
                 published_by=SME, published_at=published_at,
             )
         )

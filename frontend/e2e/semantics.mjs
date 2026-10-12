@@ -1,13 +1,13 @@
 /**
- * End-to-end check of the Phase 4 semantic journey:
- * 4.1  OWL export of the draft -> lossless RDF import with report -> preserved axioms -> OWL 2 RL
- *      reasoning preview -> designer deletion orphans a preserved axiom -> publication blocked ->
- *      axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
- * 4.2  SHACL Shapes tab -> authored shape -> sample-data validation -> shapes.ttl in the package ->
- *      KG build under a SHACL validation policy -> per-fact SHACL lane in Fact Validation.
- * 4.3  Inspector "Advanced semantics": locked IRI after publication, disjointness and a restriction,
- *      canvas badges, OWL export; Validation tab with separate SHACL and OWL 2 RL lanes.
- * Settings: fourth navigation section -> register and really test an LLM (local Ollama by default,
+ * End-to-end check of the semantic journey:
+ * RDF / OWL    OWL export of the draft -> lossless RDF import with report -> preserved axioms -> OWL 2 RL
+ *              reasoning preview -> designer deletion orphans a preserved axiom -> publication blocked ->
+ *              axiom resolved -> ols-semantic/2 package published with four RDF syntaxes.
+ * SHACL        SHACL Shapes tab -> authored shape -> sample-data validation -> shapes.ttl in the package ->
+ *              KG build under a SHACL validation policy -> per-fact SHACL lane in Fact Validation.
+ * Semantics    Inspector "Advanced semantics": locked IRI after publication, disjointness and a restriction,
+ *              canvas badges, OWL export; Validation tab with separate SHACL and OWL 2 RL lanes.
+ * Settings: register and really test an LLM (local Ollama by default,
  *      E2E_LLM_BASE_URL / E2E_LLM_MODEL) -> built-in Oxigraph -> unreachable SPARQL endpoint reported ->
  *      project default resolved by discovery.
  *
@@ -69,7 +69,7 @@ let report
 let supplyChain
 let build
 
-console.log(`Ontology Lifecycle Studio - Phase 4 semantic journey against ${BASE_URL}`)
+console.log(`Ontology Lifecycle Studio - semantic journey against ${BASE_URL}`)
 try {
   await step('Open the RDF / OWL tab of Ontology Studio and identify the reviewer', async () => {
     project = (await api('GET', '/projects')).body.find((p) => p.name === 'Supply Chain')
@@ -186,8 +186,7 @@ try {
     expect(ntriples.includes('<http://www.w3.org/2002/07/owl#minQualifiedCardinality>'), 'qualified restriction survives')
   })
 
-  // ------------------------------------------------------------------ milestone 4.2: SHACL
-
+  // ------------------------------------------------------------  ------ SHACL
   await step('SHACL Shapes tab: generated shapes are well formed', async () => {
     supplyChain = (await api('GET', `/projects/${project.id}/ontologies`)).body.find((o) => o.name === 'Supply Chain Core')
     await page.goto(`${BASE_URL}/projects/${project.id}/ontology?ontology=${supplyChain.id}&tab=shapes`)
@@ -408,7 +407,7 @@ d:s1 a sc:Supplier ; sc:legalName "Contoso" .`
 
   const unexpected = consoleErrors.filter((e) => !e.includes('Download the React DevTools'))
   expect(unexpected.length === 0, `browser console errors: ${unexpected.join(' | ')}`)
-  console.log(`\nPhase 4 semantic journey passed. Screenshots: ${ARTIFACTS}`)
+  console.log(`\nSemantic journey passed. Screenshots: ${ARTIFACTS}`)
 } finally {
   await browser.close()
 }

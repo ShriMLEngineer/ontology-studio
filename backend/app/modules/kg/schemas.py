@@ -294,7 +294,7 @@ class FactSummary(BaseModel):
     source_label: str
     graph_element_id: str | None
     shacl_status: Literal["conforms", "Violation", "Warning", "Info"] | None = Field(
-        default=None, description="Most severe SHACL result for the fact; None for builds evaluated before Phase 4"
+        default=None, description="Most severe SHACL result for the fact; None for builds evaluated before SHACL validation existed"
     )
     policy_id: str | None = None
 
@@ -317,7 +317,7 @@ class FactDetail(FactSummary):
     resolution: dict[str, Any]
     sources: list[dict[str, Any]]
     excerpts: list[SourceExcerpt]
-    lanes: dict[str, Any] | None = Field(default=None, description="Policy, SHACL and entailment lanes (Phase 4)")
+    lanes: dict[str, Any] | None = Field(default=None, description="Policy, SHACL and entailment lanes")
     subject_vertex_id: str | None
     object_vertex_id: str | None
     build_id: str
@@ -542,7 +542,7 @@ class BuildComparison(BaseModel):
     metrics: list[MetricComparison]
 
 
-# ---------------------------------------------------------------------------------- graph deployments (Phase 4.4)
+# ---------------------------------------------------------------------------------- graph deployments
 
 
 class CapabilityProfileRead(BaseModel):

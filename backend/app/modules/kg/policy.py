@@ -2,9 +2,9 @@
 
 Policies are immutable and versioned (``key/version``); a build records the full policy
 configuration in its frozen configuration, so later releases can add policies or new versions
-without re-judging earlier builds. ``application-strict/1`` (the default) reproduces the Phase 3
+without re-judging earlier builds. ``application-strict/1`` (the default) reproduces the original application
 outcome exactly; SHACL adds information (missing required values become warnings) but never
-changes the status of a fact that Phase 3 accepted, unless an SME authored a shape with severity
+changes the status of a fact that the application check accepted, unless an SME authored a shape with severity
 Violation.
 """
 
@@ -45,7 +45,7 @@ _SHACL_DEFAULTS: dict[str, Outcome] = {
     "Warning": "warn",
     "Info": "info",
     # Generated cardinalities duplicate application semantics: a missing required value is reported
-    # (Phase 3 only counted it in a metric) and single-value conflicts are quarantined by the
+    # (before SHACL validation existed it was only counted in a metric) and single-value conflicts are quarantined by the
     # application's conflict resolution, which knows which value was stated first.
     "generated_min_count": "warn",
     "generated_max_count": "info",
@@ -58,7 +58,7 @@ POLICIES: dict[str, ValidationPolicy] = {
             id="application-strict/1",
             name="Application strict",
             description=(
-                "Phase 3 behaviour. Domain and range are enforced by the application check (a reversed relationship "
+                "Original behaviour. Domain and range are enforced by the application check (a reversed relationship "
                 "is rejected and diagnosed). SHACL constraint violations reject; missing required values are "
                 "warnings; single-value conflicts are quarantined."
             ),

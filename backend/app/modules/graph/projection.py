@@ -1,6 +1,6 @@
-"""Deterministic projections of a build's accepted facts (Phase 4.4).
+"""Deterministic projections of a build's accepted facts.
 
-* :func:`project_property_graph` - vertices and edges (the Phase 3 graph-persistence logic, moved
+* :func:`project_property_graph` - vertices and edges (the original graph-persistence logic, moved
   here unchanged so builds and deployments share it).
 * :func:`project_rdf` - RDF quads: a data named graph per build (instance IRIs
   ``{data_namespace}e/{vertex_id}``, ``rdf:type``, typed literals, relationships with property

@@ -1,4 +1,4 @@
-"""phase3 knowledge graph
+"""knowledge graph
 
 Adds knowledge-graph build records (configuration, stages, logs, entities, candidate facts,
 ontology gaps), the local graph store tables and the origin of change proposals.

@@ -1,9 +1,9 @@
-"""semantic foundation (Phase 4 milestone 4.1)
+"""semantic foundation
 
 Adds persisted element IRIs and OWL semantics, the ontology header (ontology IRI, prefixes,
 imports, domain/range policy), preserved extension axioms and RDF import records.
 
-Data migration: every draft element receives the IRI that the Phase 1-3 serialiser derived from
+Data migration: every draft element receives the IRI that the earlier serialiser derived from
 the draft's namespace + local name, so the next export denotes exactly the same resources.
 Published versions are not touched (their snapshots and artifacts are immutable).
 

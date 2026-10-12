@@ -34,7 +34,7 @@ class OntologyMetadata(_Strict):
     namespace: Namespace
     prefix: Prefix
     description: Description = ""
-    # Ontology header (Phase 4). Omitted fields are left unchanged on draft save.
+    # Ontology header. Omitted fields are left unchanged on draft save.
     ontology_iri: Annotated[str, StringConstraints(strip_whitespace=True, max_length=1000)] | None = None
     prefixes: list[PrefixBinding] = Field(default_factory=list, max_length=100)
     imports: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]] = Field(
@@ -108,7 +108,7 @@ class OntologyDraft(BaseModel):
     object_properties: list[ObjectPropertyDefinition]
     datatype_properties: list[DatatypePropertyDefinition]
     layout: DiagramLayout
-    # Elements of the latest published version: their IRIs can no longer change (read-only, Phase 4).
+    # Elements of the latest published version: their IRIs can no longer change (read-only).
     locked_iri_ids: list[str] = Field(default_factory=list)
 
 

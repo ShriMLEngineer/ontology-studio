@@ -1,6 +1,6 @@
 """OLS Semantic Profile -> OWL 2 (RDF) serialisation for snapshot format /2.
 
-The frozen Phase 1-3 serialiser (``registry/rdf.py``) remains in use for legacy (/1) snapshots so
+The frozen legacy serialiser (``registry/rdf.py``) remains in use for legacy (/1) snapshots so
 their published artifacts stay reproducible. Differences in /2 (decision D2/D3):
 
 * persisted element IRIs, explicit ontology IRI, custom prefixes and ``owl:imports``;

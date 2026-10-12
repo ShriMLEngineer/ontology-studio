@@ -1,7 +1,7 @@
-"""shacl validation lanes (Phase 4 milestone 4.2)
+"""shacl validation lanes
 
 Adds authored SHACL node shapes of ontology drafts, per-lane validation results of knowledge-graph
-candidate facts (NULL for builds evaluated before Phase 4, which are never re-judged) and an
+candidate facts (NULL for builds evaluated before these lanes existed, which are never re-judged) and an
 optional project data namespace for instance IRIs. Additive only: no existing row changes.
 
 Revision ID: 0005

@@ -561,7 +561,11 @@ All endpoints are under `/api` (OpenAPI at `http://127.0.0.1:8000/docs`); errors
 Navigation has four sections: Project Workspace, Ontology Studio, Knowledge Graph Studio and - since
 Phase 4 - **Settings** (project defaults, LLM models and graph databases: register, edit, test and
 delete; kinds without an adapter are explained). Registered configurations are selectable when a
-project is created, when a discovery run is started and when a KG build is configured.
+project is created, when a discovery run is started and when a KG build is configured. A fifth
+entry, **About**, is an interactive product tour with a sticky section navigator (scroll spy and
+URL hash): an overview with a role-based starting point, a lifecycle explorer, a product tour that
+deep-links to every tab, a clickable React Flow architecture map, a filterable technology catalogue
+and the live status of the running instance. Its content lives in `src/features/about/content.ts`.
 
 **Project Workspace** (Phase 4) shows the **Project lifecycle navigator**: iteration tabs (active and
 closed), the iteration's start stage, goal and the iteration it continues, a status legend with

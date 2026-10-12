@@ -1,4 +1,4 @@
-"""Deployment adapters per graph target kind (Phase 4.4).
+"""Deployment adapters per graph target kind.
 
 Every adapter deploys a build's projection, *verifies* the deployment by counting what the target
 actually holds afterwards, reads the graph back for the explorer and (RDF targets) runs read-only

@@ -186,8 +186,7 @@ class ExtensionAxiom(BaseModel):
     anchor_ids: list[str] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------------- SHACL shapes (Phase 4.2)
-
+# ---------------------------------------------------------------------------------- SHACL shapes
 ShapeSeverity = Literal["Violation", "Warning", "Info"]
 NodeKind = Literal["IRI", "Literal", "BlankNode", "BlankNodeOrIRI", "BlankNodeOrLiteral", "IRIOrLiteral"]
 ShapeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}$")]

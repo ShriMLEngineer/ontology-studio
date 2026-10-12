@@ -1,5 +1,5 @@
 /**
- * End-to-end check of Phase 4.4/4.5 multi-graph deployment:
+ * End-to-end check of multi-graph deployment:
  *   KG build deploys to the embedded Oxigraph -> Deployments tab (verified counts, compatibility
  *   report, preview for kinds without adapter) -> a real Oxigraph SPARQL 1.1 server is registered and
  *   tested in Settings -> the build is deployed to it from the UI -> read-only SPARQL console (results,
@@ -83,7 +83,7 @@ let server
 let serverUrl
 let sparqlDeployment
 
-console.log(`Ontology Lifecycle Studio - Phase 4 multi-graph journey against ${BASE_URL}`)
+console.log(`Ontology Lifecycle Studio - multi-graph journey against ${BASE_URL}`)
 try {
   await step('Seeded project: publish v1.0.0, upload the supply-chain CSVs and save mappings', async () => {
     project = (await api('GET', '/projects')).body.find((p) => p.name === 'Supply Chain')
@@ -257,7 +257,7 @@ try {
     (e) => !e.includes('Download the React DevTools') && !e.includes('status of 503') && !e.includes('status of 422'),
   )
   expect(unexpected.length === 0, `browser console errors: ${unexpected.join(' | ')}`)
-  console.log(`\nPhase 4 multi-graph journey passed. Screenshots: ${ARTIFACTS}`)
+  console.log(`\nMulti-graph journey passed. Screenshots: ${ARTIFACTS}`)
 } finally {
   server?.kill()
   await browser.close()

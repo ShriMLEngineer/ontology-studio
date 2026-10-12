@@ -6,7 +6,7 @@ The pipeline consumes two interfaces only:
   connector implements the same interface later without changing mapping or pipeline code).
 * :class:`TextSource` - page-aware text chunks for ontology-guided LLM extraction (PDF, text).
 
-Both are created from the existing Phase 2 source documents; no ingestion is duplicated.
+Both are created from the existing source documents; no ingestion is duplicated.
 """
 
 import csv
@@ -149,7 +149,7 @@ class CsvDocumentSource:
 
 
 class DocumentTextSource:
-    """Page-aware text chunks of an uploaded PDF or text document (Phase 2 ingestion)."""
+    """Page-aware text chunks of an uploaded PDF or text document."""
 
     def __init__(self, session: Session, document: SourceDocument) -> None:
         self.source_id = document.id

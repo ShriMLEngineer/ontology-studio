@@ -1,4 +1,4 @@
-"""Phase 4.4/4.5: graph projections, deployments, compatibility reports and the SPARQL console.
+"""Graph projections, deployments, compatibility reports and the SPARQL console.
 
 Every deployment test writes to a real store: the embedded Oxigraph (pyoxigraph) or an Oxigraph
 SPARQL 1.1 server started as a subprocess (``oxigraph serve``; skipped if the binary is missing).
@@ -398,7 +398,7 @@ def test_migration_records_legacy_local_graphs(db_path: Path) -> None:
     with TestClient(create_app(settings)) as client:
         build = run_build(setup_kg(client))
         nodes, edges = build["stats"]["graph"]["nodes"], build["stats"]["graph"]["edges"]
-    command.downgrade(alembic_config(settings.database_url), "0006")  # as if the build predates Phase 4.4
+    command.downgrade(alembic_config(settings.database_url), "0006")  # as if the build predates graph deployments
     upgrade_database(settings.database_url)
     with TestClient(create_app(settings)) as client:
         rows = _deployments(client, build["id"])

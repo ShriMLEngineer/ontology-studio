@@ -152,8 +152,8 @@ function LaneSections({ fact }: { fact: FactDetail }) {
       <section className="space-y-1.5" data-testid="fact-lanes">
         <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">SHACL validation</h4>
         <p className="text-xs text-muted-foreground">
-          Not run: this build was evaluated before Phase 4 (structural and evidence validation only). Earlier builds are
-          never re-judged.
+          Not run: this build was evaluated before SHACL validation existed (structural and evidence validation only).
+          Earlier builds are never re-judged.
         </p>
       </section>
     )

@@ -1,4 +1,4 @@
-"""Phase 4 milestone 4.2 - SHACL shapes, PySHACL engine, validation policies and the KG SHACL lane."""
+"""SHACL shapes, PySHACL engine, validation policies and the KG SHACL lane."""
 
 from pathlib import Path
 from typing import Any
@@ -236,7 +236,7 @@ def _lanes(client: TestClient, fact: dict[str, Any]) -> dict[str, Any]:
     return client.get(f"/api/kg/facts/{fact['id']}").json()["lanes"]
 
 
-def test_strict_policy_reproduces_phase3_outcomes_and_reports_shacl(seeded_client: TestClient) -> None:
+def test_strict_policy_reproduces_original_outcomes_and_reports_shacl(seeded_client: TestClient) -> None:
     env = setup_kg(seeded_client)
     client = env["client"]
     build = run_build(env)
@@ -316,11 +316,11 @@ def test_builds_on_legacy_versions_derive_shapes_and_label_them(seeded_client: T
     assert derived.headers["x-artifact-derived"] == "true" and "sh:NodeShape" in derived.text
 
 
-def test_pre_phase4_facts_are_reported_without_lanes(seeded_client: TestClient, db_path: Path) -> None:
+def test_facts_written_before_lanes_existed_are_reported_without_lanes(seeded_client: TestClient, db_path: Path) -> None:
     env = setup_kg(seeded_client, ["suppliers.csv"])
     build = run_build(env)
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
-    with engine.begin() as connection:  # simulate facts written by a Phase 3 build
+    with engine.begin() as connection:  # simulate facts written by a build that predates the lanes
         connection.execute(text("UPDATE kg_candidate_facts SET lanes = NULL WHERE build_id = :id"), {"id": build["id"]})
     engine.dispose()
     items = facts(env["client"], build["id"])

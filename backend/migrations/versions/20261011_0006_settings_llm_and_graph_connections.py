@@ -1,4 +1,4 @@
-"""settings llm and graph connections (Phase 4 Settings section)
+"""settings llm and graph connections (Settings section)
 
 Registered LLM configurations and graph database connections (secrets referenced by environment
 variable name only) and per-project defaults. Additive: existing projects keep the environment

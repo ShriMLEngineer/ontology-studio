@@ -1,4 +1,4 @@
-"""Graph deployments of knowledge-graph builds (Phase 4.4).
+"""Graph deployments of knowledge-graph builds.
 
 The canonical graph of a build is always the local SQL property graph written by the build. A
 *deployment* writes the same accepted facts, through a versioned mapping profile, to a graph

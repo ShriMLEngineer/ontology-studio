@@ -141,11 +141,11 @@ const SHACL_BADGE: Record<string, { label: string; className: string }> = {
   Info: { label: 'Info', className: 'border-sky-200 bg-sky-50 text-sky-700' },
 }
 
-/** Most severe SHACL result of a fact; builds evaluated before Phase 4 show "not run". */
+/** Most severe SHACL result of a fact; builds evaluated before SHACL validation existed show "not run". */
 export function ShaclBadge({ status }: { status: string | null }) {
   if (!status) {
     return (
-      <span className="text-[11px] text-muted-foreground" title="Build evaluated before Phase 4">
+      <span className="text-[11px] text-muted-foreground" title="Build evaluated before SHACL validation existed">
         not run
       </span>
     )

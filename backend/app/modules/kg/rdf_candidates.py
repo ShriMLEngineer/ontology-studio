@@ -1,4 +1,4 @@
-"""RDF view of knowledge-graph candidates and the SHACL / entailment lanes (Phase 4.2).
+"""RDF view of knowledge-graph candidates and the SHACL / entailment lanes.
 
 Only *asserted* triples of structurally projectable candidates are produced: entity types of
 entities whose class exists in the version, relationships whose predicate exists and whose

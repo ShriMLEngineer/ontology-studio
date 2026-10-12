@@ -385,8 +385,7 @@ def graph_element(
     return queries.element(build_id, element_id, via=_source(deployments, build_id, deployment_id))
 
 
-# ---------------------------------------------------------------------- graph deployments (Phase 4.4)
-
+# ---------------------------------------------------------------------- graph deployments
 
 @router.get("/kg/graph-capabilities", response_model=GraphCapabilitiesRead)
 def graph_capabilities(deployments: Deployments) -> GraphCapabilitiesRead:

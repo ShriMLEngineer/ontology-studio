@@ -2,7 +2,7 @@
 
 ``validate_schema`` is a pure function over the canonical :class:`OntologySchema`. It has no
 knowledge of persistence, UI or any specific business domain, so the same rules apply to saved
-drafts, imported ontologies and (Phase 2) AI-generated change proposals.
+drafts, imported ontologies and AI-generated change proposals.
 
 Severity semantics:
 
@@ -530,7 +530,7 @@ def _check_orphans(schema: OntologySchema, out: _Collector) -> None:
             )
 
 
-# ---------------------------------------------------------------------------------- IRIs (Phase 4)
+# ---------------------------------------------------------------------------------- IRIs
 
 
 def _valid_iri(value: str) -> bool:
@@ -711,7 +711,7 @@ def _check_extension_axioms(schema: OntologySchema, elements: list[AnyElement], 
             )
 
 
-# ---------------------------------------------------------------------------------- SHACL shapes (Phase 4.2)
+# ---------------------------------------------------------------------------------- SHACL shapes
 
 
 def _check_shapes(schema: OntologySchema, classes_by_id: dict[str, ClassDefinition], out: _Collector) -> None:

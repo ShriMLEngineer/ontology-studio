@@ -80,7 +80,7 @@ def test_user_journey_changes_persist_across_restart(
 
     assert reloaded["draft_revision"] == start_revision + 1
     by_id = {c["id"]: c for c in reloaded["classes"]}
-    # Phase 4 adds the persisted IRI and OWL semantics to every element (additive fields).
+    # Every element also carries the persisted IRI and OWL semantics (additive fields).
     assert {k: by_id["cls-inventory-lot"][k] for k in new_class} == new_class
     assert by_id["cls-inventory-lot"]["iri"] == "https://example.com/ontology/supply-chain#InventoryLot"
     assert by_id[supplier["id"]]["aliases"] == ["Vendor", "Seller"]

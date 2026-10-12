@@ -443,7 +443,7 @@ class OntologyService:
         for element in elements:
             record = by_id.get(element.id)
             if element.id in locked:
-                # A draft IRI that already diverged before Phase 4 (namespace changed after the last
+                # A draft IRI that already diverged before IRIs were persisted (namespace changed after the last
                 # publication) is kept rather than silently rewritten; the publish diff flags it.
                 stored = record.iri if record is not None else None
                 iri = element.iri or stored or locked[element.id]
@@ -525,7 +525,7 @@ class OntologyService:
             values = {f: _db_value(getattr(element, f)) for f in fields}
             record = by_id.pop(element.id, None)  # type: ignore[attr-defined]
             if record is not None and "semantics" in values and "semantics" not in element.model_fields_set:
-                # Clients unaware of OWL semantics (Phase 1-3 payloads) must not erase them.
+                # Clients unaware of OWL semantics (older payloads) must not erase them.
                 values["semantics"] = record.semantics
             if record is None:
                 self.repo.add_element(

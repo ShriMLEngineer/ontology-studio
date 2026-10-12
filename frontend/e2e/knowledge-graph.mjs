@@ -1,5 +1,5 @@
 /**
- * End-to-end check of the Phase 3 knowledge-graph lifecycle through the UI and real APIs:
+ * End-to-end check of the knowledge-graph lifecycle through the UI and real APIs:
  *
  *   publish v1.0.0 -> select sources + version -> configure mappings -> build (real LLM for the
  *   PDF) -> facts (reversed relationship rejected, unsupported fact quarantined) -> graph explorer
@@ -107,7 +107,7 @@ let firstBuild
 let firstGraph
 let secondBuild
 
-console.log(`Ontology Lifecycle Studio - Phase 3 knowledge graph journey against ${BASE_URL}${SKIP_PDF ? ' (structured sources only)' : ''}`)
+console.log(`Ontology Lifecycle Studio - knowledge graph journey against ${BASE_URL}${SKIP_PDF ? ' (structured sources only)' : ''}`)
 try {
   await step('Open the project and identify the user', async () => {
     project = (await api('GET', '/projects')).body.find((p) => p.name === 'Supply Chain')
@@ -164,7 +164,7 @@ try {
     await shot('05-configured')
   })
 
-  await step('Start the build and follow the pipeline stages (ten since Phase 4)', async () => {
+  await step('Start the build and follow the pipeline stages (ten stages)', async () => {
     await page.getByLabel('Build name (optional)').fill('Supplier network baseline')
     await page.getByRole('button', { name: 'Start build' }).click()
     await page.getByTestId('build-status').waitFor()

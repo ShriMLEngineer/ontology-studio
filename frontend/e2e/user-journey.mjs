@@ -1,5 +1,5 @@
 /**
- * End-to-end check of the Phase 1 user journey against a running stack.
+ * End-to-end check of the ontology designer user journey against a running stack.
  *
  *   npm run e2e:journey
  *
@@ -63,7 +63,7 @@ async function selectOption(triggerSelector, optionLabel) {
 let revisionBeforeSave = 0
 let revisionAfterSave = 0
 
-console.log(`Ontology Lifecycle Studio - Phase 1 journey (run ${RUN_ID}) against ${BASE_URL}`)
+console.log(`Ontology Lifecycle Studio - designer journey (run ${RUN_ID}) against ${BASE_URL}`)
 try {
   await step('Launch the application', async () => {
     await page.goto(BASE_URL)

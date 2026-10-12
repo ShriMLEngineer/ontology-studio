@@ -1,4 +1,4 @@
-"""Phase 4 Settings: registered LLM configurations, graph connections, project defaults and selection.
+"""Settings: registered LLM configurations, graph connections, project defaults and selection.
 
 Connection tests are real HTTP calls; they run against small in-process harness servers (an
 OpenAI-compatible /models endpoint and a SPARQL 1.1 query endpoint), never against mocks inside the

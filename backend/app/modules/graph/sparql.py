@@ -1,4 +1,4 @@
-"""Read-only SPARQL for the deployment query console (Phase 4.4).
+"""Read-only SPARQL for the deployment query console.
 
 Queries are parsed with rdflib before they reach a store: only SELECT, ASK, CONSTRUCT and DESCRIBE
 are accepted (every SPARQL Update form is rejected by the query grammar) and federated ``SERVICE``

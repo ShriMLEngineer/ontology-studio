@@ -84,7 +84,7 @@ class OntologyView:
         return target_id in self.ancestors(class_id)
 
     def satisfies(self, class_id: str | None, constraint_id: str | None) -> bool:
-        """Domain/range check. An undeclared domain or range (open signature, Phase 4 imports) admits
+        """Domain/range check. An undeclared domain or range (open signature, e.g. imported ontologies) admits
         every class; a declared one requires the class or a subclass."""
         if not constraint_id:
             return bool(class_id)

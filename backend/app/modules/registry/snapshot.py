@@ -33,7 +33,7 @@ class SnapshotMetadata(BaseModel):
 
 
 class OntologySnapshot(BaseModel):
-    """Format /1 = published before Phase 4 (legacy, read-only); /2 adds IRIs, header, semantics,
+    """Format /1 = legacy (read-only); /2 adds IRIs, header, semantics,
     preserved axioms and SHACL shapes."""
 
     format: Literal["ols.ontology-snapshot/1", "ols.ontology-snapshot/2"] = SNAPSHOT_FORMAT

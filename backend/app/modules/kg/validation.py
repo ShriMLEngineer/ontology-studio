@@ -55,7 +55,7 @@ class Assessment:
     canonical_value: str | None = None
     status: str = REJECTED
     reasons: list[str] = field(default_factory=list)
-    # Phase 4 lanes. ``policy`` is None for the Phase 3 evaluation (no SHACL / entailment lanes).
+    # Policy, SHACL and entailment lanes. ``policy`` is None for the original evaluation (no SHACL / entailment lanes).
     policy: ValidationPolicy | None = None
     shacl: list[dict[str, Any]] = field(default_factory=list)
     entailment: list[Check] = field(default_factory=list)

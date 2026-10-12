@@ -1,4 +1,4 @@
-"""Capability profiles of graph database targets and projection mapping profiles (Phase 4.4).
+"""Capability profiles of graph database targets and projection mapping profiles.
 
 A capability profile states what a target can represent natively. ``verified`` marks profiles
 checked against the implementation that ships with this release (the adapter and its integration

@@ -1,7 +1,7 @@
 [project]
 name = "ontology-lifecycle-studio-backend"
 version = "0.1.0"
-description = "Ontology Lifecycle Studio - FastAPI modular monolith (Phase 1)"
+description = "Ontology Lifecycle Studio - FastAPI modular monolith"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143,<0.200",

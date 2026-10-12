@@ -1,4 +1,4 @@
-"""Phase 4 Project Lifecycle Navigator: iterations and stage statuses derived from real records."""
+"""Project Lifecycle Navigator: iterations and stage statuses derived from real records."""
 
 from datetime import datetime
 from pathlib import Path

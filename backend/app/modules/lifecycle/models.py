@@ -1,4 +1,4 @@
-"""Project lifecycle iterations (Phase 4 Project Lifecycle Navigator)."""
+"""Project lifecycle iterations (Project Lifecycle Navigator)."""
 
 from datetime import datetime
 from typing import Any

@@ -186,7 +186,7 @@ class KgCandidateFact(Base):
     sources: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     document_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     graph_element_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # Phase 4 per-lane results (policy, SHACL, entailment); NULL for builds evaluated before Phase 4.
+    # Per-lane results (policy, SHACL, entailment); NULL for builds evaluated before the lanes existed.
     lanes: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
 
@@ -217,12 +217,12 @@ class KgOntologyGap(Base):
 
 
 class KgGraphDeployment(Base):
-    """One deployment of a build's accepted facts to a graph database target (Phase 4.4).
+    """One deployment of a build's accepted facts to a graph database target.
 
     Records the target, the versioned mapping and capability profiles, the compatibility report
     (and who acknowledged any semantic loss), the expected and verified element counts and the
     outcome. ``origin`` is ``build`` (written by the build), ``manual`` (deployed later) or
-    ``legacy`` (a factual record, created by migration 0007, of a pre-Phase-4 build's local SQL graph).
+    ``legacy`` (a factual record, created by migration 0007, of the local SQL graph of a build that predates deployments).
     """
 
     __tablename__ = "kg_graph_deployments"
