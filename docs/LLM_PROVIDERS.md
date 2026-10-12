@@ -77,3 +77,9 @@ fallback.
 - Provider model catalogs and capabilities can change. The registry intentionally
   accepts a configured model/deployment identifier rather than inventing or
   maintaining a hardcoded business/domain model catalog.
+- Responses generation checks provider completion status before parsing strict JSON-schema
+  output. A response marked incomplete is never accepted, even if its text happens to be valid
+  JSON. Token-limit truncation reports the configured limit and suggests increasing **Max output
+  tokens** or reducing the KG extraction batch size; the adapter does not silently increase budgets.
+  SDK JSON-validation failures use the bounded repair path. Failed KG batches retain their raw
+  output for audit and surface the specific failure without persisting partial facts.

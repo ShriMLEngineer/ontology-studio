@@ -197,9 +197,32 @@ def test_invalid_llm_output_fails_the_build_honestly(seeded_client: TestClient) 
 
     _, build, _ = _run(seeded_client, LLMOutputError("not JSON"))
     assert build["status"] == "failed"
-    assert build["error"] == "The model returned invalid output for every extraction batch."
+    assert build["error"] == "The model returned invalid output for every extraction batch. not JSON"
     stages = {s["key"]: s["status"] for s in build["stages"]}
     assert stages["entity_extraction"] == "failed" and stages["graph_persistence"] == "skipped"
+
+
+def test_truncated_output_is_preserved_without_creating_text_facts(seeded_client: TestClient) -> None:
+    from app.modules.kg.models import KgBuild
+    from app.modules.llm.provider import LLMOutputError
+
+    raw = '{"entities":[{"ref":"E1","name":"unfinished'
+    env, build, _ = _run(
+        seeded_client,
+        LLMOutputError(
+            "The model response was truncated at the configured output limit (4096 tokens). "
+            "No partial facts were accepted. Increase Max output tokens in Settings or reduce the extraction batch size.",
+            raw_text=raw,
+        ),
+    )
+    assert build["status"] == "failed" and "4096 tokens" in build["error"]
+    assert "Unexpected error" not in build["error"]
+    assert facts(env["client"], build["id"], origin="llm") == []
+    with seeded_client.app.state.session_factory() as session:
+        stored = session.get(KgBuild, build["id"])
+        assert stored is not None and len(stored.llm_outputs) == 1
+        assert stored.llm_outputs[0]["raw_text"] == raw
+        assert "truncated" in stored.llm_outputs[0]["error"]
 
 
 def test_transport_errors_fail_the_build(seeded_client: TestClient) -> None:

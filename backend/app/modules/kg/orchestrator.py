@@ -457,7 +457,11 @@ class _Run:
                 )
             except LLMOutputError as error:
                 failed += 1
-                outputs.append({"batch": number, "chunk_ids": [c.id for c in batch], "error": str(error)})
+                outputs.append({
+                    "batch": number, "chunk_ids": [c.id for c in batch],
+                    "error": str(error), "raw_text": error.raw_text,
+                })
+                self.tracker._update(lambda build: setattr(build, "llm_outputs", deepcopy(outputs)))
                 self.tracker.log(key, f"Batch {number}: the model returned invalid output ({error}).", level="warning")
                 continue
             except LLMError as error:
@@ -487,7 +491,9 @@ class _Run:
                 f"({time.perf_counter() - started:.1f} s).",
             )
         if self.batches and failed == len(self.batches):
-            raise StageFailure("The model returned invalid output for every extraction batch.")
+            raise StageFailure(
+                f"The model returned invalid output for every extraction batch. {outputs[-1]['error']}"
+            )
         for normalizer in self.normalizers:
             self.extraction.mentions += normalizer.result.mentions
 

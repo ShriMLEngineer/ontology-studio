@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from anthropic import AnthropicError
 from azure.core.exceptions import AzureError
-from openai import OpenAIError
+from openai import LengthFinishReasonError, OpenAIError, pydantic_function_tool
 from pydantic import BaseModel, ValidationError
 
 from app.modules.llm.openai_compatible import (
@@ -118,6 +118,8 @@ class _StructuredSdkProvider:
         last_error: Exception | None = None
         usage = LLMUsage()
         for attempt in range(1 + self._max_repair_attempts):
+            parsed = None
+            call_usage = LLMUsage()
             for retry in range(3):
                 try:
                     last_text, parsed, call_usage = self._complete(
@@ -126,6 +128,17 @@ class _StructuredSdkProvider:
                     break
                 except LLMTransportError:
                     raise
+                except LengthFinishReasonError as error:
+                    raise LLMOutputError(
+                        f"The model response was truncated at the configured output limit "
+                        f"({self._max_output_tokens} tokens). No partial facts were accepted. Increase "
+                        "Max output tokens in Settings or reduce the extraction batch size."
+                    ) from error
+                except ValidationError as error:
+                    last_error = error
+                    inputs = [entry.get("input") for entry in error.errors(include_url=False)]
+                    last_text = next((value for value in inputs if isinstance(value, str)), "")
+                    break
                 except _PROVIDER_ERRORS as error:
                     status = getattr(error, "status_code", None)
                     transient = (
@@ -209,15 +222,29 @@ class OpenAIProvider(_StructuredSdkProvider):
         if self._api_style == "responses":
             if "reasoning_effort" in parameters:
                 parameters["reasoning"] = {"effort": parameters.pop("reasoning_effort")}
-            response = client.responses.parse(
+            response = client.responses.create(
                 model=self._model,
                 input=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                text_format=schema,
+                text={"format": {
+                    "type": "json_schema", "name": schema_name, "strict": True,
+                    "schema": pydantic_function_tool(schema, name=schema_name)["function"]["parameters"],
+                }},
                 max_output_tokens=self._max_output_tokens,
                 **parameters,
             )
-            parsed = getattr(response, "output_parsed", None)
             output_text = getattr(response, "output_text", "") or ""
+            if getattr(response, "status", None) == "incomplete":
+                reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+                if reason == "max_output_tokens":
+                    message = (
+                        f"The model response was truncated at the configured output limit "
+                        f"({self._max_output_tokens} tokens). No partial facts were accepted. Increase "
+                        "Max output tokens in Settings or reduce the extraction batch size."
+                    )
+                else:
+                    message = "The provider returned an incomplete response. No partial facts were accepted."
+                raise LLMOutputError(message, raw_text=output_text)
+            parsed = None
             raw_usage = _usage(getattr(response, "usage", None), "input_tokens", "output_tokens")
         else:
             response = client.chat.completions.parse(

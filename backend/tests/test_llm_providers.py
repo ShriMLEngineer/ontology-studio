@@ -5,7 +5,7 @@ import pytest
 from openai import OpenAIError
 from pydantic import BaseModel, ValidationError
 
-from app.modules.llm.provider import LLMTransportError
+from app.modules.llm.provider import LLMOutputError, LLMTransportError
 from app.modules.llm.providers import (
     AnthropicProvider,
     AzureFoundryAnthropicProvider,
@@ -25,7 +25,7 @@ class FakeOpenAI:
         self.calls: list[dict[str, Any]] = []
         self.error = error
         self.parsed = parsed or Extraction(answer="done")
-        self.responses = SimpleNamespace(parse=self.responses_parse)
+        self.responses = SimpleNamespace(create=self.responses_parse)
         self.chat = SimpleNamespace(completions=SimpleNamespace(parse=self.chat_parse))
         self.models = SimpleNamespace(retrieve=self.retrieve)
 
@@ -34,6 +34,7 @@ class FakeOpenAI:
         if self.error:
             raise self.error
         return SimpleNamespace(
+            status="completed",
             output_parsed=self.parsed,
             output_text=self.parsed.model_dump_json(),
             usage=SimpleNamespace(input_tokens=3, output_tokens=2),
@@ -105,6 +106,69 @@ def test_responses_maps_registered_reasoning_effort() -> None:
     assert client.calls[0]["api"] == "responses"
     assert client.calls[0]["reasoning"] == {"effort": "low"}
     assert "reasoning_effort" not in client.calls[0]
+    assert client.calls[0]["text"]["format"]["strict"] is True
+    assert client.calls[0]["text"]["format"]["schema"]["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("output", ['{"answer":"truncated', '{"answer":"looks complete"}'])
+def test_incomplete_responses_are_not_parsed_retried_or_accepted(output: str) -> None:
+    calls = []
+
+    def create(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status="incomplete", incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output_text=output,
+        )
+
+    provider = OpenAIProvider(
+        model="gpt-6-luna", api_key="test-secret", base_url="https://api.openai.com/v1",
+        timeout_seconds=10, max_output_tokens=4096, temperature=0,
+        client_factory=lambda **_: SimpleNamespace(responses=SimpleNamespace(create=create)),
+    )
+    with pytest.raises(LLMOutputError, match="4096 tokens.*No partial facts were accepted") as caught:
+        provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
+    assert len(calls) == 1 and caught.value.raw_text == output
+
+
+def test_sdk_validation_errors_use_the_bounded_repair_path() -> None:
+    calls = []
+
+    def parse(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            Extraction.model_validate_json('{"answer":"unfinished')
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(parsed=Extraction(answer="done"), content=None))],
+            usage=None,
+        )
+
+    provider = OpenAIProvider(
+        model="gpt-4.1-mini", api_key="test-secret", base_url="https://api.openai.com/v1",
+        timeout_seconds=10, max_output_tokens=4096, temperature=0,
+        client_factory=lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=parse))),
+    )
+    result = provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
+    assert result.value.answer == "done" and result.attempts == 2 and len(calls) == 2
+
+
+def test_sdk_invalid_json_after_repairs_is_a_safe_output_error() -> None:
+    calls = []
+
+    def parse(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return Extraction.model_validate_json('{"answer":"private unfinished source')
+
+    provider = OpenAIProvider(
+        model="gpt-4.1-mini", api_key="test-secret", base_url="https://api.openai.com/v1",
+        timeout_seconds=10, max_output_tokens=4096, temperature=0,
+        client_factory=lambda **_: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=parse))),
+    )
+    with pytest.raises(LLMOutputError, match="after 2 attempt") as caught:
+        provider.generate_structured(system="extract", user="text", schema=Extraction, schema_name="result")
+    assert len(calls) == 2
+    assert "private unfinished source" not in str(caught.value)
+    assert caught.value.raw_text == '{"answer":"private unfinished source'
 
 
 def test_openai_errors_are_sanitized() -> None:
