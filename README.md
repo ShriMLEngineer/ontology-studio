@@ -14,11 +14,12 @@ in the application logic is specific to it.
 | Ontology governance | Create / import → AI-assisted discovery → SME review → validate → approve → publish → reuse & evolve |
 | KG construction | Ingest → select approved ontology → extract → validate facts → build / refresh → evaluate → propose ontology improvements |
 
-## Status - Phase 3 milestone (verified)
+## Status - Phase 4 (verified)
 
 | Capability | State |
 |---|---|
 | Project Workspace: create/select projects, ontology summary, validation status, pending reviews, published versions, data sources with preview, latest KG build, activity | ✅ working |
+| **Project Lifecycle Navigator** (Phase 4): graphical, iteration-aware workflow; completed / reused / in-progress / pending / blocked / outdated per iteration, derived from real records; new iterations from any stage reusing earlier outputs; frozen history | ✅ working |
 | Ontology Studio designer: visual graph, add/edit/delete classes, relationships, attributes, hierarchy, aliases, ontology settings | ✅ working |
 | Draft persistence: atomic save, optimistic locking, revisions, layout, unsaved-changes guard | ✅ working |
 | Structural validation: 24 issue codes, persisted reports, navigate from finding to element | ✅ working |
@@ -26,10 +27,14 @@ in the application logic is specific to it.
 | **Ontology alignment**: duplicate prevention, synonym and conflict detection, unknown-id rejection, dependency tracking | ✅ working (deterministic) |
 | **SME Review**: evidence, current vs proposed, validation impact, edit, approve / reject / request refinement / reopen, comments, persistent review trail, apply approved changes to the draft | ✅ working (proposals from AI discovery and from KG feedback) |
 | **Registry**: validation-gated publication of immutable versions, semantic versioning, history, comparison, Turtle / JSON export with checksums | ✅ working |
-| **KG pipeline**: CSV + PDF sources, saved source-to-ontology mappings, published-version builds with nine persisted stages and logs, history, rebuild | ✅ working |
+| **KG pipeline**: CSV + PDF sources, saved source-to-ontology mappings, published-version builds with ten persisted stages (nine for builds before Phase 4) and logs, history, rebuild | ✅ working |
 | **KG extraction & validation**: deterministic record mapping, ontology-guided LLM extraction, entity resolution, independent structural and evidence validation → accepted / rejected / quarantined with reasons | ✅ working (verified with `qwen2.5:7b`) |
 | **Graph**: provider-independent `GraphStore`, durable SQL adapter (Gremlin-shaped, build-scoped, idempotent), Cytoscape.js explorer with search, filters and source provenance | ✅ working (Cosmos DB Gremlin adapter **not** implemented - interface only) |
 | **Evaluation & feedback**: metrics with explicit denominators, ontology gaps → SME proposals → new version → rebuild | ✅ working |
+| **RDF / OWL** (Phase 4): persisted IRIs locked after publication, OWL semantics in the inspectors (equivalence, disjointness, restrictions, inverses, characteristics), lossless RDF import with preserved axioms, Turtle / RDF-XML / JSON-LD / N-Triples packages, OWL 2 RL reasoning preview | ✅ working |
+| **SHACL** (Phase 4): generated, authored and preserved shapes, PySHACL validation without inference, versioned validation policies, per-fact SHACL lane; malformed shapes block publication | ✅ working |
+| **Multi-graph deployments** (Phase 4): RDF and property-graph projections, compatibility reports, verified deployments to embedded Oxigraph and any SPARQL 1.1 endpoint, explorer read-back, read-only SPARQL console | ✅ working (Neo4j and Cosmos DB adapters **not** built - no server available; previews only) |
+| **Settings** (Phase 4): LLM models and graph databases registered, tested for real and selected per project, run and build | ✅ working |
 
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the full plan and acceptance
 criteria, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
@@ -37,10 +42,10 @@ criteria, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and
 
 ## Technology
 
-* **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, SQLite (PostgreSQL-compatible), RDFLib, pypdf, httpx2, pytest
+* **Backend:** Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, SQLite (PostgreSQL-compatible), RDFLib, owlrl, PySHACL, pyoxigraph, pypdf, httpx2, pytest
 * **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui (Radix), React Flow, Cytoscape.js, TanStack Query, React Router
 * **AI:** any OpenAI-compatible Chat Completions endpoint (Ollama, OpenAI, Azure OpenAI, vLLM, LM Studio)
-* **Graph:** `GraphStore` protocol with a durable SQL adapter (Gremlin-shaped; Azure Cosmos DB Gremlin is the target, not yet connected)
+* **Graph:** canonical SQL property graph (Gremlin-shaped) plus verified deployments to embedded Oxigraph and SPARQL 1.1 endpoints (the `oxigraph` server CLI is a dev dependency used by tests)
 
 ## Prerequisites
 
@@ -134,6 +139,7 @@ npm run e2e:governance        # Phase 2 journey with the configured REAL LLM (ta
 npm run e2e:kg                # Phase 3 KG journey; the PDF uses the REAL LLM (E2E_KG_SKIP_PDF=1 for CSV only)
 npm run e2e:semantic          # Phase 4 RDF/OWL import, reasoning, SHACL, policies and Settings (registers the local Ollama LLM)
 npm run e2e:graphs            # Phase 4 multi-graph: Oxigraph deployment, a real Oxigraph SPARQL server, SPARQL console
+npm run e2e:lifecycle         # Phase 4 lifecycle navigator: iterations, reused outputs, frozen history
 # E2E_BROWSER_CHANNEL=chrome to use Chrome, E2E_HEADED=1 to watch
 ```
 

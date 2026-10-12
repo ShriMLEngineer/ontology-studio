@@ -170,3 +170,65 @@ real `qwen2.5:7b` the PDF batch took ~6 minutes on CPU and produced 13 text fact
   `StructuredSource` connector - no credentials or connectivity in this environment.
 * SHACL shapes / RDF export of the knowledge graph; multi-column identifiers and cross-file joins in
   mappings; LLM-assisted evidence review for quarantined facts.
+
+---
+
+## Phase 4 - Standards-based semantics and database-agnostic knowledge graphs (Day 4)
+
+**Goal:** RDF/RDFS/OWL modelling with stable IRIs, lossless RDF import/export, SHACL shapes and
+PySHACL validation, OWL 2 RL reasoning kept separate from the other validation lanes, database-
+independent graph projections with verified deployments and compatibility reports, a Settings
+section for LLM models and graph databases, and an iteration-aware Project Lifecycle Navigator -
+without breaking Phase 1-3 data or behaviour. Baseline: the approved
+[PHASE4_ARCHITECTURE_PROPOSAL.md](./PHASE4_ARCHITECTURE_PROPOSAL.md) (decisions D1-D11).
+
+### Milestones (each verified and committed)
+
+| # | Milestone | Verification |
+|---|---|---|
+| 4.1 | Persisted IRIs (minted, follow renames until published, then locked); OWL semantics per element; ontology header; `ols-semantic/2` serializer and package (Turtle, RDF/XML, JSON-LD, N-Triples, manifest); lossless RDF import with preserved extension axioms; OWL 2 RL entailment preview; migration `0004` | `test_semantics.py` (round trips, losslessness, IRI locking, migration backfill); `e2e:semantic` |
+| 4.2 | SHACL shapes graph (generated, signature, authored, preserved); PySHACL engine without inference; SHACL-SHACL meta-check; shapes in the package; versioned validation policies (`application-strict/1` default = Phase 3 outcomes); KG `shacl_validation` stage with per-fact lanes; migration `0005` | `test_shacl.py` (policy parity 51/4/2, no RDFS inference, lanes); `e2e:semantic`, `e2e:kg` |
+| Settings | Fourth navigation section; registered LLM models and graph connections (secrets by env-var name), real read-only connection tests, project defaults, selection at project creation, discovery and KG builds; migration `0006` | `test_settings.py`; `e2e:semantic` (real Ollama test) |
+| 4.4/4.5 | Deterministic property-graph and RDF projections; capability and mapping profiles; compatibility reports with semantic-loss acknowledgement; adapters for local SQL, embedded Oxigraph and SPARQL 1.1 endpoints with verified counts; explorer read-back from deployments; read-only SPARQL console; migration `0007` with factual legacy rows | `test_graph_deployments.py` (incl. a real `oxigraph serve` endpoint and outage); `e2e:graphs` |
+| Lifecycle | Project iterations with nine stages and six derived statuses, start from any stage reusing earlier outputs, frozen history; migration `0008` | `test_lifecycle.py`; `e2e:lifecycle` |
+| 4.3 | Inspector *Advanced semantics* (equivalence, disjointness, restrictions, inverse, sub-properties, characteristics, functional, deprecation, language), IRI-lock and preserved-axiom badges, canvas marks, Validation tab lanes (SHACL well-formedness gate, OWL 2 RL check, evidence pointer) | `test_shacl.py` (shapes gate), `test_semantics.py` (locked ids); `e2e:semantic` steps 15-16 |
+
+### Scope delivered
+
+| Area | Delivered |
+|---|---|
+| Semantic model | Hybrid canonical model (D1): typed elements with persisted IRIs and OWL semantics plus preserved extension axioms for everything outside the profile; `required`/`multi_valued` become SHACL constraints, not OWL axioms (D2). |
+| RDF | Export in four syntaxes; import into a new ontology or empty draft with an import report (modelled, preserved, superseded, added); blank-node reconciliation; preserved axioms anchored to elements, orphan detection blocks publication. |
+| SHACL | Form editor for authored shapes, generated shapes from data constraints and signatures, imported SHACL preserved, sample-data validation, `shapes.ttl` in every new package, well-formedness gate at publication. |
+| Validation lanes | Structural (model rules, gate), SHACL (per fact under a versioned policy), OWL 2 RL (informational unless a policy says otherwise), evidence (per fact) - stored and shown separately. |
+| Graphs | Canonical local SQL graph unchanged; deployments to embedded Oxigraph or any SPARQL 1.1 endpoint (named graphs for data, provenance and ontology), verified by reading counts back; compatibility per feature; explorer and SPARQL console over deployed data. |
+| Settings | LLM models and graph databases registered once, tested for real, chosen per project / run / build; builds freeze their choices. |
+| Lifecycle | Graphical, iteration-aware workflow in Project Workspace; statuses derived from records; new iterations from intermediate stages with recorded reused outputs. |
+
+### Backward compatibility (verified)
+
+* Migrations `0004`-`0008` are additive; each was exercised on populated databases (IRI backfill,
+  legacy deployment rows for completed builds, iteration #1 for existing projects) and `alembic
+  check` reports no drift.
+* Legacy (`ols-snapshot/1`) versions stay immutable and are exported through the frozen Phase 3
+  serializer; derived RDF/shapes downloads are labelled as derived.
+* Phase 3 builds keep their nine stages and verdicts; under the default policy new builds reproduce
+  the Phase 3 outcomes exactly (51 accepted, 4 rejected, 2 quarantined on the sample data).
+* SME approvals, proposals, evidence, provenance and earlier builds are untouched; the three original
+  navigation sections are unchanged and Settings is the only new section.
+
+### Deferred / not available
+
+* Neo4j and Azure Cosmos DB (Gremlin) adapters: no server or account was available to build and
+  verify them against; both kinds are listed as unavailable with the reason, and compatibility
+  previews use documented (unverified) capability profiles. No integration is simulated.
+* Custom (user-defined) mapping profiles - three built-in, versioned profiles only.
+* Editing imported (preserved) SHACL in the form editor - preserved verbatim, removable.
+* Validation policies are code-defined and versioned (no policy editor).
+* The SPARQL console cannot cancel a long-running query on the embedded store (results are capped;
+  HTTP endpoints use a timeout).
+
+Quality gates: `pytest` (231 tests, 62 new in Phase 4), `ruff check`, `alembic check` (no drift), `npm run build`,
+`npm run lint`, and on fresh databases `npm run e2e:semantic` (23 steps, real local LLM test), `e2e:graphs` (9 steps,
+real Oxigraph SPARQL server), `e2e:lifecycle` (8 steps), `e2e:kg` (17 steps, structured sources, unchanged 51/4/2) and
+`e2e:journey` (15 steps).

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposal - **awaiting approval**. Nothing in this document is implemented. |
+| **Status** | **Approved and implemented** (Phase 4 complete). Delivered scope, deviations and deferred items: [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md#phase-4---standards-based-semantics-and-database-agnostic-knowledge-graphs-day-4); decisions ADR-035 - ADR-053 in [DECISIONS.md](./DECISIONS.md). The assessment below is kept as written before implementation. |
 | **Date** | 2026-10-11 |
 | **Baseline** | Commit `a1076ef` (Phase 3 complete) |
 | **Scope** | Architecture and compatibility assessment; target architecture; migration plan; roadmap |
