@@ -74,6 +74,58 @@ export function SourceList({ fact }: { fact: FactDetail }) {
   )
 }
 
+function NormalizationSection({ fact }: { fact: FactDetail }) {
+  if (fact.kind !== 'attribute') return null
+  const record = fact.value_normalization
+  if (!record) {
+    return (
+      <section className="space-y-1.5" data-testid="fact-normalization" data-normalization-status="not-recorded">
+        <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Value normalisation</h4>
+        <p className="text-xs text-muted-foreground">
+          Not recorded: this build was created before value normalisation existed. Earlier builds are never re-evaluated.
+        </p>
+      </section>
+    )
+  }
+  const tone =
+    record.status === 'normalized' ? 'border-sky-300 bg-sky-50 text-sky-800'
+    : record.status === 'ambiguous' ? 'border-amber-300 bg-amber-50 text-amber-800'
+    : record.status === 'failed' ? 'border-red-300 bg-red-50 text-red-800'
+    : 'border-emerald-300 bg-emerald-50 text-emerald-800'
+  return (
+    <section className="space-y-1.5" data-testid="fact-normalization" data-normalization-status={record.status}>
+      <h4 className="flex items-center gap-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+        Value normalisation
+        <Badge variant="outline" className={`text-[10px] normal-case ${tone}`}>
+          {record.status}
+        </Badge>
+      </h4>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-muted-foreground">Raw value</dt>
+        <dd className="font-mono break-all">{record.raw_value}</dd>
+        <dt className="text-muted-foreground">Normalised value</dt>
+        <dd className="font-mono break-all">
+          {record.normalized_value ?? <span className="font-sans text-muted-foreground">(none: not converted)</span>}
+        </dd>
+        <dt className="text-muted-foreground">Datatype</dt>
+        <dd className="font-mono break-all">{record.datatype_iri}</dd>
+        <dt className="text-muted-foreground">Rule</dt>
+        <dd className="font-mono">{record.rule}</dd>
+        {record.unit && (
+          <>
+            <dt className="text-muted-foreground">Unit</dt>
+            <dd>
+              {record.unit}
+              {record.scale ? ` (scale ${record.scale})` : ''}
+            </dd>
+          </>
+        )}
+      </dl>
+      <p className="text-xs text-muted-foreground">{record.message}</p>
+    </section>
+  )
+}
+
 export function FactProvenance({ fact, showStatement = true }: { fact: FactDetail; showStatement?: boolean }) {
   return (
     <div className="space-y-4" data-testid="fact-provenance" data-fact-status={fact.status}>
@@ -117,6 +169,7 @@ export function FactProvenance({ fact, showStatement = true }: { fact: FactDetai
           #{fact.build_number} · ontology v{fact.ontology_version}
         </dd>
       </dl>
+      <NormalizationSection fact={fact} />
       <section className="space-y-1.5">
         <h4 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Structural validation</h4>
         <CheckList

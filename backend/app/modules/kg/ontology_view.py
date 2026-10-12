@@ -5,6 +5,7 @@ questions used by domain/range validation. Nothing outside the snapshot is ever 
 """
 
 from app.modules.discovery.alignment import normalize_term
+from app.modules.kg.normalization import ValueSpec, value_spec_for
 from app.modules.ontology.domain import (
     ClassDefinition,
     DatatypePropertyDefinition,
@@ -40,6 +41,18 @@ class OntologyView:
                 for name in _names(element):
                     self._index[kind].setdefault(name, set()).add(element.id)
         self._ancestors: dict[str, set[str]] = {}
+        self._value_specs: dict[str, ValueSpec] = {}
+
+    # ------------------------------------------------------------------ attribute values
+
+    def value_spec(self, property_id: str | None) -> ValueSpec | None:
+        """The datatype and unit of an attribute's values, as defined by this immutable published version."""
+        prop = self.datatype_properties.get(property_id or "")
+        if prop is None:
+            return None
+        if prop.id not in self._value_specs:
+            self._value_specs[prop.id] = value_spec_for(prop)
+        return self._value_specs[prop.id]
 
     # ------------------------------------------------------------------ resolution
 

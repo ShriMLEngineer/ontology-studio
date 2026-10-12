@@ -17,6 +17,7 @@ from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 from app.modules.kg.canonical import FactCandidate
+from app.modules.kg.normalization import AMBIGUOUS
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.policy import ValidationPolicy
 from app.modules.kg.resolution import ResolutionResult, ResolvedEntity
@@ -83,6 +84,10 @@ def build_candidate_graph(
         else:
             prop = view.datatype_properties.get(fact.predicate_id or "")
             if prop is None:
+                continue
+            if assessment.normalization is not None and assessment.normalization.status == AMBIGUOUS:
+                # Held for review: a value that cannot be typed unambiguously is never asserted, so SHACL
+                # does not judge a literal nobody could type. The structural lane quarantines the fact.
                 continue
             if assessment.canonical_value is not None:
                 value = Literal(assessment.canonical_value, datatype=XSD[prop.datatype.value])

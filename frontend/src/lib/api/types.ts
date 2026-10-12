@@ -818,6 +818,8 @@ export interface FactSummary {
   object_class_label: string | null
   value: string | null
   datatype: string | null
+  /** How the raw attribute value was typed; null for non-attribute facts and builds created before value normalisation. */
+  normalization_status: 'exact' | 'normalized' | 'ambiguous' | 'failed' | null
   structural_passed: boolean
   evidence_status: 'supported' | 'weak' | 'unlocated' | 'missing'
   resolution_passed: boolean
@@ -881,6 +883,18 @@ export interface SourceExcerpt {
   columns: string[] | null
 }
 
+export interface ValueNormalization {
+  status: 'exact' | 'normalized' | 'ambiguous' | 'failed'
+  raw_value: string
+  normalized_value: string | null
+  datatype: string
+  datatype_iri: string
+  rule: string
+  message: string
+  unit: string | null
+  scale: string | null
+}
+
 export interface FactDetail extends FactSummary {
   structural: { passed: boolean; checks: Check[] }
   evidence: { status: string; checks: Check[] }
@@ -888,6 +902,8 @@ export interface FactDetail extends FactSummary {
   sources: FactSourceRef[]
   excerpts: SourceExcerpt[]
   lanes: FactLanes | null
+  /** Audit record of the attribute value (raw value, normalised value, datatype, rule); null if not recorded. */
+  value_normalization: ValueNormalization | null
   subject_vertex_id: string | null
   object_vertex_id: string | null
   build_id: string

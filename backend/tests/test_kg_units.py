@@ -10,9 +10,9 @@ from app.db.session import create_db_engine, create_session_factory
 from app.modules.graph.sql_store import SqlGraphStore
 from app.modules.graph.store import GraphEdge, GraphIntegrityError, GraphVertex
 from app.modules.kg.canonical import LLM, STRUCTURED, Mention, SourceRef
+from app.modules.kg.normalization import parse_literal
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.resolution import resolve_entities
-from app.modules.kg.validation import parse_literal
 from app.modules.ontology.domain import ClassDefinition
 from app.modules.registry.snapshot import OntologySnapshot, SnapshotMetadata
 

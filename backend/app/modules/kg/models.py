@@ -188,6 +188,9 @@ class KgCandidateFact(Base):
     graph_element_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Per-lane results (policy, SHACL, entailment); NULL for builds evaluated before the lanes existed.
     lanes: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # How the raw attribute value was typed (raw value, normalised value, datatype, rule, status). NULL for facts that
+    # are not attributes and for builds created before value normalisation existed, which are never re-evaluated.
+    value_normalization: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
 
 

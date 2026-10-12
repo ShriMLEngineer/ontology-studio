@@ -85,6 +85,7 @@ flowchart LR
 | 11 | Settings: LLM configurations, graph database connections, project defaults | `settings`, `graph.targets` | ✔ Phase 4 |
 | 7 | KG extraction | `kg.mapping`, `kg.extraction`, `kg.resolution` | ✔ Phase 3 |
 | 8 | Fact validation | `kg.validation` | ✔ Phase 3 (structural + evidence) |
+| 8b | Attribute value normalisation (typed literals from raw text, ontology-driven) | `kg.normalization` | ✔ see [VALUE_NORMALIZATION.md](VALUE_NORMALIZATION.md) |
 | 9 | Graph persistence & query | `graph`, `kg.queries` | ✔ Phase 3 (`SqlGraphStore`) |
 | 10 | KG evaluation & ontology feedback | `kg.evaluation`, `kg.feedback` | ✔ Phase 3 |
 | - | Audit trail (cross-cutting) | `activity` | ✔ |
@@ -422,7 +423,7 @@ flowchart LR
   map --> canon[Canonical mentions,<br/>fact candidates, gap candidates]
   llm --> norm[Normalise: resolve ids,<br/>locate quotes] --> canon
   canon --> res[Entity resolution<br/>key → alias, ambiguity flagged]
-  res --> sv[Structural validation]
+  res --> sv[Structural validation<br/>values normalised to typed literals]
   sv --> ev[Evidence validation]
   ev --> st{status}
   st -- accepted --> gs[(GraphStore<br/>graph_id = build)]
@@ -448,7 +449,7 @@ build linked to its parent.
 | 3 Entity extraction | Deterministic `transform_records` for structured sources; one LLM request per batch for documents (entities normalised now). |
 | 4 Relationship extraction | Normalise LLM relationships, attributes and unknown concepts; predicates resolved against the version. |
 | 5 Entity resolution | `resolve_entities`; resolved entities and mentions persisted. |
-| 6 Structural validation | `assess_*_structure` for every entity type fact, relationship and attribute. |
+| 6 Structural validation | `assess_*_structure` for every entity type fact, relationship and attribute; attribute values are first normalised to typed literals (`kg/normalization.py`, see [VALUE_NORMALIZATION.md](VALUE_NORMALIZATION.md)). |
 | 7 Evidence validation | `assess_*_evidence`; status derived; single-value conflicts quarantined; facts persisted. |
 | 8 Graph persistence | Accepted facts → `GraphVertex`/`GraphEdge` upserts under the build's graph scope (since Phase 4.4: through `project_property_graph`, recorded as the canonical deployment, then deployed to the build's selected graph target - see 4.6e). |
 | 9 Evaluation | Gaps persisted; metrics computed and stored on the build. |
@@ -481,16 +482,24 @@ compatible class whose label or configured alias matches. (3) Several candidates
 *ambiguous* entity whose facts are quarantined. Similarity never merges. Vertex ids are stable
 hashes of class + key, so the same entity has the same id in every build.
 
+**Value normalisation** (`kg/normalization.py`, [VALUE_NORMALIZATION.md](VALUE_NORMALIZATION.md)). Raw attribute
+values from LLM extraction and from structured mappings pass through one ontology-driven layer before
+validation: the datatype and unit come from the selected published version, an unambiguous value is typed
+(`97.0%` → `"97.0"^^xsd:decimal` on a percentage attribute, 0-100 scale), an ambiguous one is held
+(quarantined, never asserted) and an invalid one fails (rejected). Every fact keeps the raw value, the
+normalised value, the datatype, the rule and the status in `value_normalization`; earlier builds are not
+re-evaluated.
+
 **Fact validation** (`kg/validation.py`) - two independent categories plus resolution:
 
 | Category | Checks |
 |---|---|
-| Structural | Class / predicate / attribute defined in the version; right property kind; subject/object refer to extracted, identified entities of defined classes; domain and range with subclass inheritance (a reversed relationship is reported as such and never repaired); literal parses as the declared XSD datatype. |
-| Evidence | Traceable source and location; structured facts are stated by their record; text facts need a quote located in the source that mentions both entities (or contains the value); both endpoints must be established by a source record or located text. |
-| Resolution | Ambiguous entity; conflicting value of a single-valued attribute. |
+| Structural | Class / predicate / attribute defined in the version; right property kind; subject/object refer to extracted, identified entities of defined classes; domain and range with subclass inheritance (a reversed relationship is reported as such and never repaired); the value is, or is unambiguously normalised to, a literal of the declared XSD datatype (`literal_datatype`; an ambiguous value is `literal_ambiguous`). |
+| Evidence | Traceable source and location; structured facts are stated by their record; text facts need a quote located in the source that mentions both entities (or contains the value, as written or as the same number); both endpoints must be established by a source record or located text. |
+| Resolution | Ambiguous entity; conflicting value of a single-valued attribute (numeric values compare by value). |
 
-Status: structural failure → **REJECTED**; resolution failure or weak / unlocated evidence →
-**QUARANTINED**; no evidence → **REJECTED**; otherwise **ACCEPTED**. Every check result and reason
+Status: structural failure → **REJECTED**; an ambiguous value, resolution failure or weak / unlocated
+evidence → **QUARANTINED**; no evidence → **REJECTED**; otherwise **ACCEPTED**. Every check result and reason
 is persisted. Entity type facts ("X is a Supplier") are validated too; only accepted entities become
 nodes.
 

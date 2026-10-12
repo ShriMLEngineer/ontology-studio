@@ -8,19 +8,31 @@
   the structured record itself, or a quote located verbatim in the document text that mentions
   the entities (or value) involved.
 
-Status: any structural failure -> REJECTED; an ambiguous entity or inadequate evidence ->
+Status: any structural failure -> REJECTED; an ambiguous value, an ambiguous entity or inadequate evidence ->
 QUARANTINED; no evidence at all -> REJECTED; otherwise ACCEPTED. A structurally valid fact is
 not assumed to be supported, and neither check proves factual correctness.
+
+Attribute values reach this module already normalised (see :mod:`app.modules.kg.normalization`): the
+datatype comes from the published ontology version, an unambiguous conversion is applied and recorded,
+and a value that cannot be typed is rejected (not a literal of the datatype) or quarantined (ambiguous).
+The strict SHACL and structural checks then run on the typed literal exactly as before.
 """
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlsplit
 
 from app.modules.kg.canonical import STRUCTURED, FactCandidate, Mention
+from app.modules.kg.normalization import (
+    AMBIGUOUS,
+    FAILED,
+    NORMALIZED,
+    NUMERIC_DATATYPES,
+    ValueNormalization,
+    normalize_value,
+    same_value,
+)
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.policy import SIGNATURE_CODES, ValidationPolicy
 from app.modules.kg.resolution import MISSING_IDENTIFIER, ResolvedEntity, normalize_name
@@ -34,6 +46,9 @@ WEAK = "weak"
 UNLOCATED = "unlocated"
 MISSING = "missing"
 _EVIDENCE_RANK = {SUPPORTED: 3, WEAK: 2, UNLOCATED: 1, MISSING: 0}
+# A failed check with one of these codes holds the fact for review (quarantine) instead of rejecting it:
+# the value could be read more than one way, so it is neither converted nor called invalid.
+HOLD_CODES = frozenset({"literal_ambiguous"})
 
 
 @dataclass
@@ -53,6 +68,8 @@ class Assessment:
     evidence: list[Check] = field(default_factory=list)
     evidence_status: str = MISSING
     canonical_value: str | None = None
+    # How the raw attribute value was typed (None for entities, relationships and historical builds).
+    normalization: ValueNormalization | None = None
     status: str = REJECTED
     reasons: list[str] = field(default_factory=list)
     # Policy, SHACL and entailment lanes. ``policy`` is None for the original evaluation (no SHACL / entailment lanes).
@@ -62,19 +79,28 @@ class Assessment:
     inferred_types: list[str] = field(default_factory=list)
 
     def _blocking_structural(self) -> list[Check]:
-        failed = [c for c in self.structural if not c.passed]
+        failed = [c for c in self.structural if not c.passed and c.code not in HOLD_CODES]
         if self.policy is not None and self.policy.signature != "reject":
             return [c for c in failed if c.code not in SIGNATURE_CODES]
         return failed
 
+    def _held_structural(self) -> list[Check]:
+        return [c for c in self.structural if not c.passed and c.code in HOLD_CODES]
+
+    @property
+    def held(self) -> bool:
+        """True when the only thing holding the fact back is an ambiguous value (it is quarantined, not rejected)."""
+        return bool(self._held_structural()) and not self._blocking_structural()
+
     def finalize(self) -> "Assessment":
         blocking = self._blocking_structural()
+        held = self._held_structural()
         resolution_ok = all(c.passed for c in self.resolution)
         outcomes = {r["outcome"] for r in self.shacl}
         entailment_ok = all(c.passed for c in self.entailment)
         if blocking or "reject" in outcomes:
             self.status = REJECTED
-        elif not resolution_ok or "quarantine" in outcomes:
+        elif held or not resolution_ok or "quarantine" in outcomes:
             self.status = QUARANTINED
         elif self.evidence_status == MISSING:
             self.status = REJECTED
@@ -86,6 +112,7 @@ class Assessment:
             self.status = ACCEPTED
         self.reasons = [
             *(c.message for c in blocking),
+            *(c.message for c in held),
             *(c.message for group in (self.resolution, self.evidence) for c in group if not c.passed),
             *(f"SHACL: {r['message']}" for r in self.shacl if r["outcome"] in ("reject", "quarantine")),
             *(c.message for c in self.entailment if not c.passed),
@@ -95,7 +122,8 @@ class Assessment:
     def lanes_dict(self) -> dict[str, Any] | None:
         if self.policy is None:
             return None
-        relaxed = [c.as_dict() for c in self.structural if not c.passed and c not in self._blocking_structural()]
+        blocking = self._blocking_structural()
+        relaxed = [c.as_dict() for c in self.structural if not c.passed and c not in blocking and c.code not in HOLD_CODES]
         return {
             "policy": {"id": self.policy.id, "name": self.policy.name, "relaxed_checks": relaxed},
             "shacl": {
@@ -120,85 +148,26 @@ class Assessment:
         return {"passed": all(c.passed for c in self.resolution), "checks": [c.as_dict() for c in self.resolution]}
 
 
-# ---------------------------------------------------------------------------------- literals
-
-_INTEGER = re.compile(r"^[+-]?\d+$")
-_DECIMAL = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)$")
-_GROUPED_DECIMAL = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
-_TRUE = {"true", "yes", "1"}
-_FALSE = {"false", "no", "0"}
-_FLOAT = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$")
-_GYEAR = re.compile(r"^-?\d{4,}(Z|[+-]\d{2}:\d{2})?$")
-_BOUNDED_INTEGERS = {"int": (-(2**31), 2**31 - 1), "long": (-(2**63), 2**63 - 1)}
-
-
-def parse_literal(value: str, datatype: str) -> tuple[bool, str | None, str]:
-    """Return (valid, canonical value, message) for ``value`` as an XSD ``datatype``."""
-    text = value.strip()
-    if not text:
-        return False, None, "The value is empty."
-    if datatype == "string":
-        return True, text, ""
-    if datatype == "integer":
-        if _INTEGER.match(text):
-            return True, str(int(text)), ""
-        return False, None, f"'{text}' is not an integer."
-    if datatype == "decimal":
-        candidate = text.replace(",", "") if _GROUPED_DECIMAL.match(text) else text
-        if _DECIMAL.match(candidate):
-            try:
-                return True, str(Decimal(candidate)), ""
-            except InvalidOperation:
-                pass
-        return False, None, f"'{text}' is not a decimal number."
-    if datatype == "boolean":
-        lowered = text.lower()
-        if lowered in _TRUE | _FALSE:
-            return True, "true" if lowered in _TRUE else "false", ""
-        return False, None, f"'{text}' is not a boolean."
-    if datatype == "date":
-        try:
-            return True, date.fromisoformat(text).isoformat(), ""
-        except ValueError:
-            return False, None, f"'{text}' is not an ISO 8601 date (YYYY-MM-DD)."
-    if datatype == "dateTime":
-        try:
-            return True, datetime.fromisoformat(text).isoformat(), ""
-        except ValueError:
-            return False, None, f"'{text}' is not an ISO 8601 date-time."
-    if datatype == "anyURI":
-        parts = urlsplit(text)
-        if parts.scheme and (parts.netloc or parts.scheme in {"urn", "mailto"}):
-            return True, text, ""
-        return False, None, f"'{text}' is not an absolute URI."
-    if datatype in _BOUNDED_INTEGERS:
-        low, high = _BOUNDED_INTEGERS[datatype]
-        if _INTEGER.match(text) and low <= int(text) <= high:
-            return True, str(int(text)), ""
-        return False, None, f"'{text}' is not a valid xsd:{datatype} ({low} to {high})."
-    if datatype in ("float", "double"):
-        candidate = text.replace(",", "") if _GROUPED_DECIMAL.match(text) else text
-        if candidate in ("INF", "-INF", "+INF", "NaN") or _FLOAT.match(candidate):
-            try:
-                number = float(candidate.replace("INF", "inf").replace("NaN", "nan"))
-            except ValueError:
-                number = None
-            if number is not None:
-                return True, repr(number) if candidate not in ("INF", "-INF", "+INF", "NaN") else candidate, ""
-        return False, None, f"'{text}' is not a valid xsd:{datatype}."
-    if datatype == "time":
-        try:
-            return True, time.fromisoformat(text).isoformat(), ""
-        except ValueError:
-            return False, None, f"'{text}' is not an ISO 8601 time (hh:mm:ss)."
-    if datatype == "gYear":
-        if _GYEAR.match(text):
-            return True, text, ""
-        return False, None, f"'{text}' is not a year (YYYY)."
-    return False, None, f"Unsupported datatype '{datatype}'."
-
-
 # ---------------------------------------------------------------------------------- helpers
+
+# A whole number token of a quote: not inside a longer word or number, and not the digits of an identifier (S-101).
+_QUOTE_NUMBER = re.compile(r"(?<![\w.,])(?<!\w[-+])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?!\w|[.,]\d)")
+
+
+def _quote_states_number(quote: str | None, normalization: ValueNormalization | None) -> bool:
+    """True when a normalised numeric value equals a number written in the quote (compared by value, whole tokens only)."""
+    if (
+        normalization is None
+        or normalization.status != NORMALIZED
+        or normalization.datatype not in NUMERIC_DATATYPES
+        or normalization.normalized_value is None
+    ):
+        return False
+    try:
+        target = Decimal(normalization.normalized_value)
+        return any(Decimal(m.group().replace(",", "")) == target for m in _QUOTE_NUMBER.finditer(quote or ""))
+    except InvalidOperation:
+        return False
 
 
 def mentions_any(text: str | None, names: list[str]) -> bool:
@@ -355,7 +324,12 @@ def assess_relationship_structure(
     return result
 
 
-def assess_attribute_structure(fact: FactCandidate, subject: ResolvedEntity | None, view: OntologyView) -> Assessment:
+def assess_attribute_structure(
+    fact: FactCandidate,
+    subject: ResolvedEntity | None,
+    view: OntologyView,
+    normalization: ValueNormalization | None = None,
+) -> Assessment:
     result = Assessment()
     prop = view.datatype_properties.get(fact.predicate_id or "")
     if prop is None:
@@ -380,11 +354,17 @@ def assess_attribute_structure(fact: FactCandidate, subject: ResolvedEntity | No
             )
         )
     if prop is not None:
-        valid, canonical, message = parse_literal(fact.value or "", prop.datatype.value)
-        result.canonical_value = canonical
-        result.structural.append(
-            Check("literal_datatype", valid, f"Value is a valid {prop.datatype.value}." if valid else message)
-        )
+        spec = view.value_spec(prop.id)
+        assert spec is not None
+        normalization = normalization or normalize_value(fact.value, spec)
+        result.normalization = normalization
+        result.canonical_value = normalization.normalized_value
+        if normalization.status == AMBIGUOUS:
+            result.structural.append(Check("literal_ambiguous", False, normalization.message))
+        else:
+            result.structural.append(
+                Check("literal_datatype", normalization.status != FAILED, normalization.message)
+            )
     return result
 
 
@@ -438,6 +418,8 @@ def assess_fact_evidence(
         )
     else:
         missing = [what for what, names in required if not mentions_any(source.quote, names)]
+        if missing and fact.kind == "attribute" and _quote_states_number(source.quote, result.normalization):
+            missing = []  # the quote states the same number, written differently (94.5% for the value 94.50)
         if missing:
             status = WEAK
             checks.append(
@@ -492,7 +474,7 @@ def quarantine_conflicts(
             chosen[key] = (value, fact)
             continue
         kept_value, kept_fact = chosen[key]
-        if value != kept_value:
+        if not same_value(value, kept_value, prop.datatype.value):
             conflicts += 1
             assessment.resolution.append(
                 Check(

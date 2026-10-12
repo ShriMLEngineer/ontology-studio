@@ -286,6 +286,11 @@ class FactSummary(BaseModel):
     object_class_label: str | None
     value: str | None
     datatype: str | None
+    normalization_status: Literal["exact", "normalized", "ambiguous", "failed"] | None = Field(
+        default=None,
+        description="How the raw attribute value was typed; None for non-attribute facts and for builds created "
+        "before value normalisation existed",
+    )
     structural_passed: bool
     evidence_status: str
     resolution_passed: bool
@@ -318,6 +323,10 @@ class FactDetail(FactSummary):
     sources: list[dict[str, Any]]
     excerpts: list[SourceExcerpt]
     lanes: dict[str, Any] | None = Field(default=None, description="Policy, SHACL and entailment lanes")
+    value_normalization: dict[str, Any] | None = Field(
+        default=None,
+        description="Audit record of the attribute value: raw value, normalised value, datatype, rule, status, unit, scale",
+    )
     subject_vertex_id: str | None
     object_vertex_id: str | None
     build_id: str

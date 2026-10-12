@@ -10,6 +10,7 @@ accepted facts reach the graph store, and only under this build's graph scope.
 
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
@@ -41,6 +42,7 @@ from app.modules.kg.extraction import (
 )
 from app.modules.kg.mapping import MappingSpec, transform_records, validate_mapping
 from app.modules.kg.models import KgBuild, KgBuildLog, KgCandidateFact, KgEntity, KgEntityMention, KgOntologyGap
+from app.modules.kg.normalization import AMBIGUOUS, EXACT, FAILED, NORMALIZED
 from app.modules.kg.ontology_view import OntologyView
 from app.modules.kg.policy import get_policy
 from app.modules.kg.rdf_candidates import build_candidate_graph, run_lanes
@@ -645,13 +647,39 @@ class _Run:
                     codes[check.code] = codes.get(check.code, 0) + 1
         for code, count in sorted(codes.items(), key=lambda item: -item[1]):
             self.tracker.log(key, f"{count} fact(s) failed structural check '{code}'.", level="warning")
+        normalization = self._log_value_normalization(key, [a for a, _, _ in fact_assessments.values()])
+        held = sum(1 for a in all_assessments if a.held)
         self.tracker.complete(
             key,
             f"{len(all_assessments) - failed} of {len(all_assessments)} candidate fact(s) are structurally valid; "
-            f"{failed} failed (they will be rejected).",
-            {"checked": len(all_assessments), "passed": len(all_assessments) - failed, "failed": failed, **codes},
+            f"{failed - held} failed (they will be rejected)"
+            + (f" and {held} hold an ambiguous value (they will be quarantined)." if held else "."),
+            {
+                "checked": len(all_assessments),
+                "passed": len(all_assessments) - failed,
+                "failed": failed,
+                **codes,
+                **{f"values_{status}": count for status, count in normalization.items()},
+            },
         )
         return fact_assessments
+
+    def _log_value_normalization(self, key: str, assessments: list[Assessment]) -> dict[str, int]:
+        """Record how attribute values were typed: counts per status, and one line per rule that changed a value."""
+        results = [a.normalization for a in assessments if a.normalization is not None]
+        by_status = Counter(n.status for n in results)
+        by_rule = Counter((n.status, n.rule) for n in results if n.status != EXACT)
+        for (status, rule), count in sorted(by_rule.items(), key=lambda item: (item[0][0], -item[1])):
+            level = "info" if status == NORMALIZED else "warning"
+            outcome = {
+                NORMALIZED: "normalised",
+                AMBIGUOUS: "held as ambiguous (not converted)",
+                FAILED: "not valid for the datatype",
+            }[status]
+            self.tracker.log(key, f"{count} attribute value(s) {outcome} by rule '{rule}'.", level=level)
+        self.stats["normalization"] = {"by_status": dict(by_status), "by_rule": {f"{s}:{r}": c for (s, r), c in by_rule.items()}}
+        self.tracker.merge_stats(normalization=self.stats["normalization"])
+        return dict(by_status)
 
     # ------------------------------------------------------------------     7. SHACL validation
     def stage_shacl_validation(
@@ -847,6 +875,9 @@ class _Run:
             object_class_id=obj.class_id if obj else None,
             value=value,
             datatype=datatype,
+            value_normalization=(
+                assessment.normalization.as_dict() if is_attribute and assessment.normalization is not None else None
+            ),
             structural=assessment.structural_dict(),
             evidence=assessment.evidence_dict(),
             resolution=assessment.resolution_dict(),

@@ -30,6 +30,7 @@ CHECK_LABELS = {
     "domain": "Domain violation",
     "range": "Range violation",
     "literal_datatype": "Value does not match the datatype",
+    "literal_ambiguous": "Value could not be typed unambiguously",
     "identifier_present": "Missing identifier",
     "subject_identifier": "Subject missing identifier",
     "object_identifier": "Object missing identifier",
@@ -122,6 +123,30 @@ def compute_evaluation(
     extraction = stats.get("extraction", {})
     vertices, edges = graph_counts
 
+    # Only builds that recorded value normalisation report it; earlier builds are never re-evaluated.
+    normalization_status = Counter(
+        (f.value_normalization or {}).get("status") for f in facts if f.kind == "attribute" and f.value_normalization
+    )
+    normalization_total = sum(normalization_status.values())
+    normalization_metrics = (
+        [
+            _rate(
+                "normalized_values", "Attribute values normalised", normalization_status.get("normalized", 0),
+                normalization_total,
+                "Attribute values converted by a documented normalisation rule (for example 97.0% to 97.0 on the "
+                "0-100 scale of a percentage attribute) / attribute values evaluated with value normalisation. "
+                "The raw value is kept on every fact.",
+            ),
+            _metric(
+                "ambiguous_values", "Ambiguous attribute values", normalization_status.get("ambiguous", 0),
+                "Attribute values held back because they could be read more than one way or carry a unit the "
+                "ontology does not define; they are not converted and are quarantined.",
+            ),
+        ]
+        if normalization_total
+        else []
+    )
+
     sections = [
         {
             "key": "sources",
@@ -189,6 +214,7 @@ def compute_evaluation(
                       "Accepted facts / candidate facts (all kinds)."),
                 _rate("relationship_acceptance_rate", "Relationship acceptance rate", rel.get("accepted", 0), rel_total,
                       "Accepted relationship facts / candidate relationship facts."),
+                *normalization_metrics,
             ],
         },
         {

@@ -67,7 +67,7 @@ to it, so the studio works for any domain.
 | Area | Capabilities |
 |---|---|
 | **Pipeline** | CSV and PDF sources, saved source-to-ontology mappings and builds bound to a published ontology version. Ten persisted stages with logs, history and rebuild. |
-| **Extraction and fact validation** | Deterministic record mapping, ontology-guided LLM extraction and entity resolution. Independent structural, SHACL and evidence validation sorts every candidate fact into **accepted**, **rejected** or **quarantined**, always with reasons. |
+| **Extraction and fact validation** | Deterministic record mapping, ontology-guided LLM extraction and entity resolution. Attribute values are normalised to typed literals using the datatype and unit defined in the published ontology (for example `97.0%` → `97.0` on a percentage attribute), and the raw value is kept for audit. Independent structural, SHACL and evidence validation sorts every candidate fact into **accepted**, **rejected** or **quarantined**, always with reasons. |
 | **Graph Explorer** | Cytoscape.js canvas with search, class / relationship / source filters, a table view and a drawer showing the build, ontology version, validation checks and the source record or page text behind every node and relationship. |
 | **Evaluation and feedback** | Metrics with explicit denominators and ontology gaps that become SME proposals, then a new version and a rebuild. |
 | **Deployments** | RDF and property-graph projections with compatibility reports, verified deployments (counts read back from the target), explorer read-back and a read-only SPARQL console. |
@@ -321,6 +321,7 @@ docs/       Architecture, decision records, LLM provider and graph database guid
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records and their rationale |
 | [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) | Supported LLM providers, credentials and operational notes |
 | [docs/GRAPH_DATABASES.md](docs/GRAPH_DATABASES.md) | Graph database registry, deployment adapters, network safety and verification status |
+| [docs/VALUE_NORMALIZATION.md](docs/VALUE_NORMALIZATION.md) | How raw extracted values (`97.0%`, `Yes.`, `1,250.50`) become typed literals: rules, ambiguity handling and the audit record |
 | [.env.example](.env.example) | Every environment variable with its default |
 
 ## Known limitations
@@ -341,6 +342,10 @@ docs/       Architecture, decision records, LLM provider and graph database guid
 * Evidence validation is lexical (quotes must be located verbatim and mention the entities);
   coreference and paraphrase are quarantined. Metrics are pipeline/structural indicators, not
   precision or recall.
+* Value normalisation converts only unambiguous values. Percentages are recognised from the
+  attribute's own definition and stored on the 0-100 scale; other units, decimal commas and
+  ambiguous dates are held for review rather than converted (see
+  [docs/VALUE_NORMALIZATION.md](docs/VALUE_NORMALIZATION.md)).
 * Source documents: text formats and text-based PDFs only (no OCR, no Office formats); originals
   are not retained - only extracted text and chunks.
 * Proposals that reference classes added by other proposals must be applied together with or after

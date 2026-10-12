@@ -19,8 +19,8 @@ from sqlalchemy import create_engine, text
 from app.core.ids import new_id
 from app.db.migrations import upgrade_database
 from app.main import create_app
+from app.modules.kg.normalization import parse_literal
 from app.modules.kg.ontology_view import OntologyView
-from app.modules.kg.validation import parse_literal
 from app.modules.ontology.domain import (
     ClassDefinition,
     ClassSemantics,
