@@ -31,7 +31,7 @@ flowchart LR
   api --> db[(SQLite now<br/>PostgreSQL-ready)]
   api --> llm[[LLM provider adapters<br/>OpenAI · Anthropic · Azure AI Foundry · Ollama · legacy compatible]]
   api --> artifacts[(Write-once artifact store<br/>JSON · Turtle)]
-  api --> graph[(GraphStore<br/>SqlGraphStore canonical · Neo4j · Cosmos DB Gremlin)]
+  api --> graphstore[(GraphStore<br/>SqlGraphStore canonical · Neo4j · Cosmos DB Gremlin)]
 ```
 
 ## 3. Repository layout

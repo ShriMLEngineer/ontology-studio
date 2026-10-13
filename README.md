@@ -96,15 +96,8 @@ where each capability lives, how the system is built and which technologies it u
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  user([Ontology engineer / SME]) --> ui["React SPA<br/>Vite · TanStack Query · React Flow · Cytoscape.js"]
-  ui -- "/api (JSON, multipart)" --> api[FastAPI modular monolith]
-  api --> db[(Application database<br/>SQLite · PostgreSQL-compatible)]
-  api --> artifacts[(Write-once artifact store<br/>JSON · OWL · SHACL)]
-  api --> llm[["LLM providers<br/>OpenAI · Anthropic · Azure AI Foundry · Ollama"]]
-  api --> graph[(Graph databases<br/>Local SQL · Oxigraph · Neo4j · Cosmos DB Gremlin · GraphDB · Fuseki · SPARQL)]
-```
+![alt text](docs/mermaid-diagram.png)
+
 
 The backend is a modular monolith (router → service → repository / pure functions → ORM) with
 framework-free functions for the critical logic. The frontend is a single-page application that
