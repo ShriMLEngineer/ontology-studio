@@ -100,10 +100,10 @@ where each capability lives, how the system is built and which technologies it u
 flowchart LR
   user([Ontology engineer / SME]) --> ui["React SPA<br/>Vite · TanStack Query · React Flow · Cytoscape.js"]
   ui -- "/api (JSON, multipart)" --> api[FastAPI modular monolith]
-  api --> db[("Application database<br/>SQLite · PostgreSQL-compatible")]
-  api --> artifacts[("Write-once artifact store<br/>JSON · OWL · SHACL")]
+  api --> db[(Application database<br/>SQLite · PostgreSQL-compatible)]
+  api --> artifacts[(Write-once artifact store<br/>JSON · OWL · SHACL)]
   api --> llm[["LLM providers<br/>OpenAI · Anthropic · Azure AI Foundry · Ollama"]]
-  api --> graph[("Graph databases<br/>Local SQL · Oxigraph · Neo4j · Cosmos DB Gremlin · GraphDB · Fuseki · SPARQL")]
+  api --> graph[(Graph databases<br/>Local SQL · Oxigraph · Neo4j · Cosmos DB Gremlin · GraphDB · Fuseki · SPARQL)]
 ```
 
 The backend is a modular monolith (router → service → repository / pure functions → ORM) with
@@ -327,32 +327,5 @@ docs/       Architecture, decision records, LLM provider and graph database guid
 ## Known limitations
 
 * No authentication, authorisation or multi-tenancy; reviewers identify themselves by name.
-* Discovery and extraction quality depend on the model: a 7B local model paraphrases quotes and
-  sometimes reverses relationships - such facts are quarantined or rejected (never repaired), so
-  recall from documents is modest. Runs and builds execute as in-process background tasks (one
-  discovery run per ontology and one KG build per project at a time); a restart fails running jobs.
-* Graph storage defaults to the local SQL adapter. Neo4j and Cosmos DB Gremlin deployments use the
-  same `GraphStore` read protocol; GraphDB, Fuseki and Cosmos DB are not live-verified (see
-  [docs/GRAPH_DATABASES.md](docs/GRAPH_DATABASES.md)). Property-graph targets store a projection of
-  the accepted facts, not ontology axioms or SHACL shapes. The explorer is sized for graphs of up
-  to a few thousand elements; larger graphs are truncated with filters.
-* Structured sources are CSV/TSV uploads (up to 10,000 records per source); the Snowflake connector
-  is an interface only. Mappings cover one entity per mapping row, single-column identifiers and
-  relationships within a record (no joins across files other than by shared business keys).
-* Evidence validation is lexical (quotes must be located verbatim and mention the entities);
-  coreference and paraphrase are quarantined. Metrics are pipeline/structural indicators, not
-  precision or recall.
-* Value normalisation converts only unambiguous values. Percentages are recognised from the
-  attribute's own definition and stored on the 0-100 scale; other units, decimal commas and
-  ambiguous dates are held for review rather than converted (see
-  [docs/VALUE_NORMALIZATION.md](docs/VALUE_NORMALIZATION.md)).
 * Source documents: text formats and text-based PDFs only (no OCR, no Office formats); originals
   are not retained - only extracted text and chunks.
-* Proposals that reference classes added by other proposals must be applied together with or after
-  them; editing a proposal does not re-compute its dependencies.
-* RDF import interprets a documented OWL profile conservatively; other constructs are preserved as
-  axioms and re-exported unchanged, but cannot be edited in the designer.
-* Object properties have exactly one domain and one range class (no union domains).
-* Concurrent editing uses optimistic locking (reload on conflict), not real-time collaboration.
-* Cloud-synchronised folders (OneDrive, Dropbox) can lock files; keep `node_modules`, `.venv` and
-  `backend/data` out of synchronisation.
