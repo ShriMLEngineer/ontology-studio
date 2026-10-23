@@ -21,6 +21,22 @@ that version with every fact traceable to its source.
 [Walkthrough](#walkthrough) · [Testing](#testing) · [Documentation](#documentation) ·
 [Known limitations](#known-limitations)
 
+## Product Demo
+
+### Start here: 15-second slideshow
+
+Watch this 15-second slideshow before the full product demo.
+
+[Watch the 15-second slideshow](docs/ontology-studio-overview.mp4)
+
+### Full demo: 8-minute walkthrough
+
+Watch the 8-minute walkthrough of Ontology Lifecycle Studio,
+covering ontology design, AI discovery, SME governance,
+Knowledge Graph construction, evaluation, and deployment.
+
+[▶ Watch Product Demo](https://youtu.be/aJBqKei-p08)
+
 ## Overview
 
 | Principle | How the studio applies it |
@@ -96,6 +112,10 @@ where each capability lives, how the system is built and which technologies it u
 
 ## Architecture
 
+### High Level Architecture
+![Continuous Ontology Governance Lifecycle](docs/ontology-governance-lifecycle.png)
+
+### Detailed Flow
 ![alt text](docs/mermaid-diagram.png)
 
 
