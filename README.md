@@ -27,7 +27,7 @@ that version with every fact traceable to its source.
 
 Watch this 15-second slideshow before the full product demo.
 
-[Watch the 15-second slideshow](docs/ontology-studio-overview.mp4)
+[Watch the 15-second slideshow](https://youtu.be/SIMJupVsC9I)
 
 ### Full demo: 8-minute walkthrough
 
